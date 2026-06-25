@@ -6,23 +6,13 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [repoName, setRepoName] = useState('');
   const [githubToken, setGithubToken] = useState('');
-  const [status, setStatus] = useState('System Idle - Ready for Blueprint Input');
+  const [status, setStatus] = useState('System Operational // Awaiting Blueprint Engine inputs.');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
-    // Smooth step-by-step UI loading feedback
-    setStatus('📡 Connecting to Frontier AI Core...');
-    
-    setTimeout(() => {
-      setStatus('🧠 Analyzing request architecture & generating code tree files...');
-    }, 2500);
-
-    setTimeout(() => {
-      setStatus('⚡ Compiling complete code text lines into safe in-memory binary code...');
-    }, 6500);
+    setStatus('📡 Initiating Handshake with High-Speed Inference Core...');
 
     try {
       const res = await fetch('/api/generate', {
@@ -31,63 +21,65 @@ export default function Home() {
         body: JSON.stringify({ prompt, userEmail: email, repoName, githubToken })
       });
 
-      if (res.ok) {
-        setStatus('✨ SUCCESS! Your compiled codebase has been emailed and pushed to GitHub!');
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setStatus(`✨ RUN COMPLETED SUCCESSFULLY! Packaged ${data.count || 0} files. Check your inbox right now!`);
         setPrompt('');
       } else {
-        const data = await res.json();
-        setStatus(`❌ Compile Error: ${data.error || 'Check environment configuration configurations.'}`);
+        setStatus(`❌ Failure Logged: ${data.error || 'Unknown communication exception occurred.'}`);
       }
-    } catch (err) {
-      setStatus('❌ Network layer exception occurred.');
+    } catch (err: any) {
+      setStatus(`❌ Interface Network Layer Blocked: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ background: '#070a13', color: '#f3f4f6', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', padding: '40px 20px' }}>
-      <div style={{ maxWidth: '650px', margin: '0 auto', background: '#0f172a', padding: '40px', borderRadius: '16px', border: '1px solid #1e293b', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)' }}>
+    <div style={{ background: '#0b0f19', color: '#f3f4f6', minHeight: '100vh', fontFamily: 'monospace', padding: '40px 20px' }}>
+      <div style={{ maxWidth: '700px', margin: '0 auto', background: '#111827', padding: '35px', borderRadius: '12px', border: '1px solid #374151', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)' }}>
         
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-          <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#10b981', animate: 'pulse 2s infinite' }}></div>
-          <h1 style={{ color: '#38bdf8', fontSize: '28px', fontWeight: '800', margin: 0, tracking: '-0.05em' }}>FORGE//AGENT v2.0</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '5px' }}>
+          <span style={{ color: '#10b981', fontSize: '20px' }}>●</span>
+          <h1 style={{ color: '#38bdf8', fontSize: '24px', fontWeight: 'bold', margin: 0, letterSpacing: '-0.025em' }}>FORGE-AGENT AUTOMATION OS v3.0</h1>
         </div>
-        <p style={{ color: '#94a3b8', fontSize: '14px', lineHeight: '1.5', marginTop: '0', marginBottom: '30px' }}>
-          An autonomous software development workspace. Input your requirements below. The agent handles total full-stack synthesis, code validation, zip archivals, and delivery.
+        <p style={{ color: '#9ca3af', fontSize: '13px', marginTop: '0', marginBottom: '25px' }}>
+          Strict autonomous full-stack orchestration layout engine powered via Llama 3.3 Core logic frameworks.
         </p>
-        
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
           <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Target Email Address</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="developer@example.com" style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px', transition: 'border-color 0.2s' }} />
+            <label style={{ display: 'block', fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', marginBottom: '6px' }}>Delivery Destination Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@example.com" style={{ width: '100%', padding: '12px', background: '#030712', border: '1px solid #4b5563', borderRadius: '6px', color: '#fff', fontSize: '14px' }} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>GitHub Developer Token (Optional)</label>
-              <input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)} placeholder="ghp_xxxx" style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
+              <label style={{ display: 'block', fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', marginBottom: '6px' }}>Git Token (Optional)</label>
+              <input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)} placeholder="ghp_xxxxxxxx" style={{ width: '100%', padding: '12px', background: '#030712', border: '1px solid #4b5563', borderRadius: '6px', color: '#fff', fontSize: '14px' }} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>GitHub Repository Name</label>
-              <input type="text" value={repoName} onChange={e => setRepoName(e.target.value)} placeholder="my-automated-repo" style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
+              <label style={{ display: 'block', fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', marginBottom: '6px' }}>Target Repository Title</label>
+              <input type="text" value={repoName} onChange={e => setRepoName(e.target.value)} placeholder="automated-app-output" style={{ width: '100%', padding: '12px', background: '#030712', border: '1px solid #4b5563', borderRadius: '6px', color: '#fff', fontSize: '14px' }} />
             </div>
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Application Blueprint Specification</label>
-            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} required rows={5} placeholder="Describe your web application, script tool, chrome extension, or game in deep structural detail..." style={{ width: '100%', padding: '12px', background: '#020617', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px', lineHeight: '1.6', resize: 'none' }} />
+            <label style={{ display: 'block', fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', marginBottom: '6px' }}>Structural Project Prompts Specification</label>
+            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} required rows={6} placeholder="State structural properties, features, pages, rules or layout styles required..." style={{ width: '100%', padding: '12px', background: '#030712', border: '1px solid #4b5563', borderRadius: '6px', color: '#fff', fontSize: '14px', lineHeight: '1.5', resize: 'none' }} />
           </div>
 
-          <button type="submit" disabled={loading} style={{ background: loading ? '#475569' : '#38bdf8', color: '#0f172a', fontWeight: '700', padding: '14px', border: 'none', borderRadius: '8px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '15px', textTransform: 'uppercase', letterSpacing: '0.025em', transition: 'background-color 0.2s' }}>
-            {loading ? 'Synthesizing Project Blueprint...' : 'Compile & Dispatch Application Source'}
+          <button type="submit" disabled={loading} style={{ background: loading ? '#4b5563' : '#38bdf8', color: '#111827', fontWeight: 'bold', padding: '14px', border: 'none', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '14px', textTransform: 'uppercase', transition: 'background 0.2s' }}>
+            {loading ? 'Executing Synthesis Core Operations...' : 'Compile, Package & Transmit System Code'}
           </button>
         </form>
 
-        <div style={{ marginTop: '25px', padding: '20px', background: '#020617', borderRadius: '8px', border: '1px solid #1e293b' }}>
-          <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Agent Operational Log</div>
-          <div style={{ color: loading ? '#38bdf8' : '#e2e8f0', fontSize: '14px', fontWeight: '500' }}>{status}</div>
+        <div style={{ marginTop: '25px', padding: '15px', background: '#030712', borderRadius: '6px', border: '1px solid #374151' }}>
+          <div style={{ fontSize: '10px', color: '#6b7280', textTransform: 'uppercase', marginBottom: '4px' }}>System Operational Feedback Telemetry</div>
+          <div style={{ color: loading ? '#38bdf8' : '#f3f4f6', fontSize: '13px', lineHeight: '1.4' }}>{status}</div>
         </div>
+
       </div>
     </div>
   );
