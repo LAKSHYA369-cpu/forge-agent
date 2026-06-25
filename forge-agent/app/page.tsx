@@ -44,7 +44,7 @@ export default function Home() {
           <span style={{ color: '#10b981', fontSize: '20px' }}>●</span>
           <h1 style={{ color: '#38bdf8', fontSize: '24px', fontWeight: 'bold', margin: 0, letterSpacing: '-0.025em' }}>FORGE-AGENT AUTOMATION OS v3.0</h1>
         </div>
-        <p style={{ color: '#9ca3af', fontSize: '13px', marginTop: '0', marginBottom: '25px' }}>
+        <p style={{ color: '#9ca3af', fontSize: '13px', marginTop: '0', '../../': '25px' }}>
           Strict autonomous full-stack orchestration layout engine powered via Llama 3.3 Core logic frameworks.
         </p>
 
