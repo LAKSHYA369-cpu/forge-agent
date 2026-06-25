@@ -7,7 +7,6 @@ export async function POST(request: Request) {
   try {
     const { prompt, userEmail, githubToken, repoName } = await request.json();
 
-    // 1. Hard Check Intact Inputs
     if (!prompt || !userEmail) {
       return NextResponse.json({ error: "Missing Target Email Address or Blueprint Specification." }, { status: 400 });
     }
@@ -16,7 +15,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GROQ_API_KEY is not defined in Vercel settings panel variables." }, { status: 500 });
     }
 
-    // 2. Fetch Logic Framework via Groq Core (Llama 3.3 70B Engine)
+    // Call Groq's high-speed API (Llama 3.3 70B Model)
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -27,13 +26,13 @@ export async function POST(request: Request) {
         model: "llama-3.3-70b-versatile",
         messages: [{
           role: "user",
-          content: `You are a Principal Full-Stack Engineer. Build a flawless, completely functional application layout structure for: "${prompt}".
-                  Provide actual working logic with no placeholder notes or truncated blocks.
+          content: `You are a Principal Software Engineer. Build a fully functional, complete application based on this request: "${prompt}".
+                  Write absolute complete code logic lines. Never truncate code or use code block comments like "// rest of your code here". Include complete configuration layout parameters.
                   You must respond with ONLY a raw, clean, valid JSON object matching this exact structure with no extra conversational text or markdown blocks:
                   {
                     "files": [
                       { "path": "index.html", "content": "complete html string lines..." },
-                      { "path": "README.md", "content": "setup markdown guide info..." }
+                      { "path": "README.md", "content": "setup instructions..." }
                     ]
                   }`
         }],
@@ -44,34 +43,32 @@ export async function POST(request: Request) {
 
     if (!groqResponse.ok) {
       const groqErr = await groqResponse.text();
-      return NextResponse.json({ error: `Groq Layer Rejection: ${groqErr}` }, { status: 500 });
+      return NextResponse.json({ error: `Groq Core Network Rejection: ${groqErr}` }, { status: 500 });
     }
 
     const aiData = await groqResponse.json();
     let rawText = aiData.choices[0].message.content.trim();
 
-    // Clean any structural wrap elements out if present
     if (rawText.startsWith("```json")) rawText = rawText.substring(7, rawText.length - 3).trim();
     if (rawText.startsWith("```")) rawText = rawText.substring(3, rawText.length - 3).trim();
 
     const parsedPayload = JSON.parse(rawText);
 
     if (!parsedPayload.files || !Array.isArray(parsedPayload.files)) {
-      return NextResponse.json({ error: "AI response did not parse into a valid file list format tree." }, { status: 500 });
+      return NextResponse.json({ error: "AI response did not parse into a valid file list tree structure." }, { status: 500 });
     }
 
-    // 3. Structural safe data-string ZIP assembly line
+    // Build the ZIP in-memory safely via base64 serialization string blocks
     const zip = new JSZip();
     parsedPayload.files.forEach((file: any) => {
       const cleanPath = file.path.replace(/^(\.\.\/|\/)+/, '');
       zip.file(cleanPath, file.content);
     });
 
-    // Generate via base64 data stream to bypass runtime architecture blocks
     const base64ZipData = await zip.generateAsync({ type: 'base64' });
     const zipBuffer = Buffer.from(base64ZipData, 'base64');
 
-    // 4. Dispatch Deliveries via Mailer Layer
+    // Setup Gmail Transport System
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
