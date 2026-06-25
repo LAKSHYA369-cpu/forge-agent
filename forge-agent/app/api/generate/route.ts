@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import JSZip from 'jszip';
+// @ts-ignore
 import nodemailer from 'nodemailer';
 
 export async function POST(request: Request) {
+// ... (leave the rest of the code exactly the same)
   try {
     const { prompt, userEmail, githubToken, repoName } = await request.json();
 
