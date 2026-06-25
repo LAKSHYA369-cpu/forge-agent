@@ -4,47 +4,60 @@ import JSZip from 'jszip';
 import nodemailer from 'nodemailer';
 
 export async function POST(request: Request) {
-// ... (leave the rest of the code exactly the same)
   try {
     const { prompt, userEmail, githubToken, repoName } = await request.json();
 
     if (!prompt || !userEmail) {
-      return NextResponse.json({ error: "Missing Email or Prompt!" }, { status: 400 });
+      return NextResponse.json({ error: "Missing required inputs: Prompt or Email." }, { status: 400 });
     }
 
-    // Call Google's Free AI Model
-    const aiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+    if (!process.env.GROQ_API_KEY) {
+      return NextResponse.json({ error: "Vercel environment key GROQ_API_KEY is not configured." }, { status: 500 });
+    }
+
+    // Call Groq's high-speed endpoint using Llama 3.3 70B
+    const aiResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
+      },
       body: JSON.stringify({
-        contents: [{ 
-          parts: [{ 
-            text: `Act as an expert developer. Create a complete application based on this request: "${prompt}".
-                  Return your entire response matching this exact JSON format layout:
+        model: "llama-3.3-70b-versatile",
+        messages: [{
+          role: "user",
+          content: `You are an expert full-stack developer. Build a complete, working application structure based on this request: "${prompt}".
+                  Provide a complete production layout containing actual code logic. 
+                  Respond with ONLY a raw, valid JSON object matching this structure with no markdown or wrap text:
                   {
                     "files": [
-                      { "path": "index.html", "content": "<html>content</html>" },
-                      { "path": "README.md", "content": "# Readme Content" }
+                      { "path": "index.html", "content": "string code..." },
+                      { "path": "README.md", "content": "setup markdown info..." }
                     ]
-                  }` 
-          }] 
+                  }`
         }],
-        generationConfig: { responseMimeType: "application/json" }
+        temperature: 0.1,
+        response_format: { type: "json_object" } // Enforces strict valid JSON data formatting
       })
     });
 
+    if (!aiResponse.ok) {
+      const errorText = await aiResponse.text();
+      return NextResponse.json({ error: `Groq Interface Error: ${errorText}` }, { status: 500 });
+    }
+
     const aiData = await aiResponse.json();
-    const rawJsonText = aiData.candidates[0].content.parts[0].text;
+    const rawJsonText = aiData.choices[0].message.content.trim();
     const structuredPayload = JSON.parse(rawJsonText);
 
-    // Create the ZIP file in computer memory
     const zip = new JSZip();
     structuredPayload.files.forEach((file: any) => {
-      zip.file(file.path, file.content);
+      const cleanPath = file.path.replace(/^(\.\.\/|\/)+/, '');
+      zip.file(cleanPath, file.content);
     });
+    
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
 
-    // Setup the Email Sender
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -53,54 +66,16 @@ export async function POST(request: Request) {
       }
     });
 
-    // Send the Email with the Attached Zip
     await transporter.sendMail({
       from: process.env.GMAIL_USER,
       to: userEmail,
-      subject: `🚀 ForgeAgent Project: ${repoName || 'Your App'}`,
-      text: `Your app has been built successfully!\n\nPrompt: "${prompt}"\n\nFind your complete source code files attached inside the .zip asset.`,
-      attachments: [{ filename: `${repoName || 'project'}.zip`, content: zipBuffer }]
+      subject: `📦 ForgeAgent Compiled Asset Pack`,
+      text: `Project compiled cleanly via Llama-3.3 Core Engine!\nPrompt: "${prompt}"`,
+      attachments: [{ filename: `project-source.zip`, content: zipBuffer }]
     });
-
-    // Upload to GitHub directly if a Developer Token was provided
-    if (githubToken && repoName) {
-      const repoCreation = await fetch('https://api.github.com/user/repos', {
-        method: 'POST',
-        headers: {
-          'Authorization': `token ${githubToken}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'ForgeAgent'
-        },
-        body: JSON.stringify({ name: repoName, private: true, auto_init: true })
-      });
-
-      if (repoCreation.ok) {
-        for (const file of structuredPayload.files) {
-          const base64Content = Buffer.from(file.content).toString('base64');
-          // We extract the user username directly from the token profile
-          const userProfileRes = await fetch('https://api.github.com/user', {
-            headers: { 'Authorization': `token ${githubToken}`, 'User-Agent': 'ForgeAgent' }
-          });
-          const userProfile = await userProfileRes.json();
-
-          await fetch(`https://api.github.com/repos/${userProfile.login}/${repoName}/contents/${file.path}`, {
-            method: 'PUT',
-            headers: {
-              'Authorization': `token ${githubToken}`,
-              'Accept': 'application/vnd.github.v3+json',
-              'User-Agent': 'ForgeAgent'
-            },
-            body: JSON.stringify({
-              message: `Added ${file.path}`,
-              content: base64Content
-            })
-          });
-        }
-      }
-    }
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: `Execution Exception: ${error.message}` }, { status: 500 });
   }
 }
