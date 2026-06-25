@@ -11,46 +11,58 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing required inputs: Prompt or Email." }, { status: 400 });
     }
 
-    if (!process.env.GROQ_API_KEY) {
-      return NextResponse.json({ error: "Vercel environment key GROQ_API_KEY is not configured." }, { status: 500 });
+    if (!process.env.GEMINI_API_KEY) {
+      return NextResponse.json({ error: "Vercel missing setup: GEMINI_API_KEY is not defined in environment variables." }, { status: 500 });
     }
 
-    // Call Groq's high-speed endpoint using Llama 3.3 70B
-    const aiResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    // Call Google's API Core
+    const aiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [{
-          role: "user",
-          content: `You are an expert full-stack developer. Build a complete, working application structure based on this request: "${prompt}".
-                  Provide a complete production layout containing actual code logic. 
-                  Respond with ONLY a raw, valid JSON object matching this structure with no markdown or wrap text:
+        contents: [{ 
+          parts: [{ 
+            text: `You are an expert full-stack developer. Build a complete, working application structure based on this request: "${prompt}".
+                  Respond with ONLY a raw, valid JSON object matching this structure:
                   {
                     "files": [
-                      { "path": "index.html", "content": "string code..." },
-                      { "path": "README.md", "content": "setup markdown info..." }
+                      { "path": "index.html", "content": "string code..." }
                     ]
-                  }`
+                  }` 
+          }] 
         }],
-        temperature: 0.1,
-        response_format: { type: "json_object" } // Enforces strict valid JSON data formatting
+        generationConfig: { 
+          responseMimeType: "application/json",
+          temperature: 0.3
+        }
       })
     });
 
+    // DIAGNOSTIC CHECK: If Google rejects the handshake, read why
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      return NextResponse.json({ error: `Groq Interface Error: ${errorText}` }, { status: 500 });
+      return NextResponse.json({ 
+        error: `Google AI Studio rejected request (Status ${aiResponse.status}). Message: ${errorText}` 
+      }, { status: 500 });
     }
 
     const aiData = await aiResponse.json();
-    const rawJsonText = aiData.choices[0].message.content.trim();
-    const structuredPayload = JSON.parse(rawJsonText);
+    
+    if (!aiData.candidates || !aiData.candidates[0]?.content?.parts?.[0]?.text) {
+      return NextResponse.json({ error: "Google AI returned a blank payload format layout structure.", raw: aiData }, { status: 500 });
+    }
 
+    let rawJsonText = aiData.candidates[0].content.parts[0].text.trim();
+
+    if (rawJsonText.startsWith("```json")) {
+      rawJsonText = rawJsonText.substring(7, rawJsonText.length - 3).trim();
+    } else if (rawJsonText.startsWith("```")) {
+      rawJsonText = rawJsonText.substring(3, rawJsonText.length - 3).trim();
+    }
+
+    const structuredPayload = JSON.parse(rawJsonText);
     const zip = new JSZip();
+    
     structuredPayload.files.forEach((file: any) => {
       const cleanPath = file.path.replace(/^(\.\.\/|\/)+/, '');
       zip.file(cleanPath, file.content);
@@ -70,12 +82,14 @@ export async function POST(request: Request) {
       from: process.env.GMAIL_USER,
       to: userEmail,
       subject: `📦 ForgeAgent Compiled Asset Pack`,
-      text: `Project compiled cleanly via Llama-3.3 Core Engine!\nPrompt: "${prompt}"`,
+      text: `Project compiled successfully! Prompt: "${prompt}"`,
       attachments: [{ filename: `project-source.zip`, content: zipBuffer }]
     });
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ error: `Execution Exception: ${error.message}` }, { status: 500 });
+    return NextResponse.json({ 
+      error: `Internal Execution Crash: ${error.message}` 
+    }, { status: 500 });
   }
 }
