@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import { WebContainer } from '@webcontainer/api';
 import JSZip from 'jszip';
 import { 
   Terminal as TerminalIcon, 
   Send, 
-  CheckCircle2, 
   Play, 
   RefreshCw, 
   Layers, 
@@ -14,16 +14,21 @@ import {
   Code, 
   Check, 
   Eye, 
-  Folder, 
   FileCode, 
   Download, 
   Settings, 
-  AlertTriangle,
-  FileText,
-  Save,
-  ChevronRight,
-  ArrowRight
+  Github, 
+  Chrome, 
+  LogOut, 
+  History, 
+  FolderGit2, 
+  Cpu
 } from 'lucide-react';
+
+// Initialize Client-Side Supabase Connection
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 type Step = 'IDLE' | 'PM_SPEC' | 'PM_APPROVE' | 'ARCHITECT_DESIGN' | 'ARCHITECT_APPROVE' | 'DEVELOPMENT' | 'TEST_RUNNING' | 'COMPLETED';
 
@@ -32,14 +37,23 @@ interface ProjectFile {
   content: string;
 }
 
+interface SavedProject {
+  id: string;
+  title: string;
+  prompt: string;
+  spec: string;
+  architecture: string;
+  files: ProjectFile[];
+}
+
 export default function Workspace() {
+  const [session, setSession] = useState<any>(null);
   const [openRouterKey, setOpenRouterKey] = useState('');
-  const [email, setEmail] = useState('');
   const [prompt, setPrompt] = useState('');
   const [repoName, setRepoName] = useState('my-automated-app');
   const [selectedModel, setSelectedModel] = useState('meta-llama/llama-3.3-70b-instruct');
 
-  // Stepper & Logging State
+  // Agent Pipeline States
   const [currentStep, setCurrentStep] = useState<Step>('IDLE');
   const [logs, setLogs] = useState<string[]>([]);
   const [pmSpec, setPmSpec] = useState<string>('');
@@ -48,29 +62,51 @@ export default function Workspace() {
   const [selectedFile, setSelectedFile] = useState<ProjectFile | null>(null);
   const [activeTab, setActiveTab] = useState<'preview' | 'code' | 'logs'>('logs');
 
-  // Interactive revision logic
+  // Interactive revision and project list states
   const [feedback, setFeedback] = useState('');
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  // WebContainer Sandbox Execution State
+  // Browser Sandbox (WebContainer) State
   const [webcontainer, setWebcontainer] = useState<WebContainer | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [testOutput, setTestOutput] = useState<string>('');
   const [isBootingSandbox, setIsBootingSandbox] = useState(true);
 
-  // Auto-scrolling ref for logs
   const logsEndRef = useRef<HTMLDivElement>(null);
 
+  // Monitor Authentication Sessions
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) {
+        fetchUserProfile(session.user.id);
+        fetchUserProjects(session.user.id);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) {
+        fetchUserProfile(session.user.id);
+        fetchUserProjects(session.user.id);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // WebContainer initialization
   useEffect(() => {
     async function bootSandbox() {
       try {
-        addLog("Booting isolated system WebContainer...");
+        addLog("Booting sandboxed system WebContainer...");
         const instance = await WebContainer.boot();
         setWebcontainer(instance);
         setIsBootingSandbox(false);
-        addLog("WebAssembly browser-sandbox environment loaded successfully.");
+        addLog("WebAssembly isolated browser sandbox operational.");
       } catch (err: any) {
-        addLog(`WebContainer Boot Exception: ${err.message}. Ensure Cross-Origin Isolation headers are active.`);
+        addLog(`Sandbox failed to load: ${err.message}`);
         setIsBootingSandbox(false);
       }
     }
@@ -85,6 +121,44 @@ export default function Workspace() {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
+  // Profile data fetchers
+  const fetchUserProfile = async (userId: string) => {
+    const { data } = await supabase.from('profiles').select('openrouter_key').eq('id', userId).single();
+    if (data?.openrouter_key) {
+      setOpenRouterKey(data.openrouter_key);
+    }
+  };
+
+  const fetchUserProjects = async (userId: string) => {
+    const { data } = await supabase.from('projects').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    if (data) setSavedProjects(data as SavedProject[]);
+  };
+
+  const saveUserProfileKey = async () => {
+    if (!session) return;
+    addLog("Updating profile configuration options...");
+    await supabase.from('profiles').upsert({
+      id: session.user.id,
+      email: session.user.email,
+      openrouter_key: openRouterKey
+    });
+    addLog("API credentials stored securely inside your Supabase profile.");
+  };
+
+  // OAuth Trigger Controls
+  const handleOAuthLogin = async (provider: 'github' | 'google') => {
+    await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.origin }
+    });
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+  };
+
+  // --- API Handshakes ---
   const callAgentAPI = async (systemInstruction: string, userPrompt: string, useJson: boolean = false) => {
     const res = await fetch('/api/agent', {
       method: 'POST',
@@ -92,50 +166,42 @@ export default function Workspace() {
       body: JSON.stringify({ systemInstruction, userPrompt, openRouterKey, useJson, model: selectedModel })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed API transaction.");
+    if (!res.ok) throw new Error(data.error || "Execution turn failed.");
     return data.content;
   };
 
-  // Safe JSON extraction wrapper to protect parsing against markdown codeblock fences
   const cleanAndParseJSON = (text: string) => {
     let raw = text.trim();
-    if (raw.startsWith("```json")) {
-      raw = raw.substring(7, raw.length - 3).trim();
-    } else if (raw.startsWith("```")) {
-      raw = raw.substring(3, raw.length - 3).trim();
-    }
+    if (raw.startsWith("```json")) raw = raw.substring(7, raw.length - 3).trim();
+    else if (raw.startsWith("```")) raw = raw.substring(3, raw.length - 3).trim();
     try {
       return JSON.parse(raw);
-    } catch (e) {
-      // RegEx fallback to match matching JSON structural boundaries
+    } catch {
       const match = raw.match(/\{[\s\S]*\}/);
-      if (match) {
-        return JSON.parse(match[0]);
-      }
-      throw new Error("Could not sanitize API JSON string.");
+      if (match) return JSON.parse(match[0]);
+      throw new Error("Could not parse agent's output.");
     }
   };
 
-  // --- STAGE 1: Product Manager Agent ---
+  // --- Multi-Agent Orchestration Pipeline ---
   const startPipeline = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!openRouterKey || !prompt) {
-      alert("Please configure your OpenRouter API Token and input your application blueprint instructions.");
+      alert("Configure your API credentials and detail your app blueprint instructions.");
       return;
     }
     setCurrentStep('PM_SPEC');
-    addLog("Analyzing directives. product Manager Agent initiated...");
+    addLog("Connecting to Product Manager Agent...");
     setActiveTab('logs');
 
     try {
-      const pmInstruction = `You are a Senior Product Manager. Analyze the user instructions and build a rigorous, comprehensive Technical Specification Document in Markdown. 
-Incorporate clean layout wireframe designs, functional logic requirements, and list all required features clearly.`;
-      const spec = await callAgentAPI(pmInstruction, `User Instructions Blueprint: ${prompt}`);
+      const pmInstruction = `You are a Senior Product Manager. Build a complete Technical Specification Document in Markdown based on the user prompt. Detail layout, functional states, and assets.`;
+      const spec = await callAgentAPI(pmInstruction, `Requirements: ${prompt}`);
       setPmSpec(spec);
-      addLog("Product Manager Agent generated Technical Specification document.");
+      addLog("Product Manager Agent compiled specification draft.");
       setCurrentStep('PM_APPROVE');
     } catch (err: any) {
-      addLog(`PM Pipeline Crash: ${err.message}`);
+      addLog(`PM turn failed: ${err.message}`);
       setCurrentStep('IDLE');
     }
   };
@@ -143,68 +209,58 @@ Incorporate clean layout wireframe designs, functional logic requirements, and l
   const handlePmReview = async (isApproved: boolean) => {
     if (!isApproved) {
       setCurrentStep('PM_SPEC');
-      addLog(`Refining Spec requirements based on feedback: "${feedback}"`);
+      addLog("Revising specification layouts...");
       try {
-        const pmInstruction = `You are an expert Product Manager. Revise and update your Technical Specification Markdown Document incorporating user adjustments.`;
-        const spec = await callAgentAPI(pmInstruction, `Current Specification Draft:\n${pmSpec}\n\nUser Change Requests:\n${feedback}`);
+        const spec = await callAgentAPI(`Update the specification based on feedback.`, `Spec:\n${pmSpec}\n\nFeedback:\n${feedback}`);
         setPmSpec(spec);
         setFeedback('');
         setCurrentStep('PM_APPROVE');
-        addLog("Updated Technical Specification processed successfully.");
+        addLog("PM specifications updated successfully.");
       } catch (err: any) {
-        addLog(`PM Revision failure: ${err.message}`);
+        addLog(`Revision failed: ${err.message}`);
       }
       return;
     }
 
-    // Move directly to System Architecture design
+    // Move to Architecture Design
     setCurrentStep('ARCHITECT_DESIGN');
-    addLog("Specification approved. Contacting Software Architect Agent...");
+    addLog("Specification signed off. Initiating Software Architect Agent...");
     try {
-      const archInstruction = `You are an expert Systems Architect. Design the project directory layout, select the optimal tech stack, and define schemas. 
-Output your final architecture design as a highly readable technical markdown blueprint.`;
-      const design = await callAgentAPI(archInstruction, `Design system layout for this Specification:\n${pmSpec}`);
+      const design = await callAgentAPI(`Design the directories, tech stack, and DB schema. Output in markdown.`, `Specs:\n${pmSpec}`);
       setArchitectureLayout(design);
-      addLog("Software Architect completed directory and schema layout design.");
+      addLog("Software Architect completed system mapping blueprints.");
       setCurrentStep('ARCHITECT_APPROVE');
     } catch (err: any) {
-      addLog(`Architect failure: ${err.message}`);
+      addLog(`Architect failed: ${err.message}`);
       setCurrentStep('PM_APPROVE');
     }
   };
 
-  // --- STAGE 2: Systems Architect Agent ---
   const handleArchitectReview = async (isApproved: boolean) => {
     if (!isApproved) {
       setCurrentStep('ARCHITECT_DESIGN');
-      addLog(`Refining directory layout schemas based on feedback: "${feedback}"`);
+      addLog("Refining directory structures...");
       try {
-        const archInstruction = `You are an expert Systems Architect. Refine your layout architecture based on user instructions.`;
-        const design = await callAgentAPI(archInstruction, `Current Blueprint Layout:\n${architectureLayout}\n\nUser Adjustments:\n${feedback}`);
+        const design = await callAgentAPI(`Update architecture diagram based on feedback.`, `Architecture:\n${architectureLayout}\n\nFeedback:\n${feedback}`);
         setArchitectureLayout(design);
         setFeedback('');
         setCurrentStep('ARCHITECT_APPROVE');
-        addLog("Updated Architecture Layout blueprint processed successfully.");
+        addLog("Architecture designs refined.");
       } catch (err: any) {
-        addLog(`Architect Revision failure: ${err.message}`);
+        addLog(`Architecture revision failed: ${err.message}`);
       }
       return;
     }
 
-    runDevelopmentStage();
+    runDevelopmentPipeline();
   };
 
-  // --- STAGE 3: Senior Developer Synthesis ---
-  const runDevelopmentStage = async () => {
+  const runDevelopmentPipeline = async () => {
     setCurrentStep('DEVELOPMENT');
-    addLog("System Architecture approved. Starting Senior Developer synthesis phase...");
-    setActiveTab('logs');
+    addLog("System blueprint signed off. Launching Senior Developer Synthesis...");
 
     try {
-      const devInstruction = `You are an expert Senior Fullstack Developer. Create the required workspace code files based on the specification and architecture layout. 
-Write highly structured, production-ready implementation logic with zero placeholders or comments like "// code goes here". 
-Always supply a 'package.json' defining entrypoints, 'index.html', required styles/scripts, and a test script config in package.json.
-Respond with ONLY a clean JSON object structure containing an array of path/content configurations:
+      const devInstruction = `You are an expert Senior Fullstack Developer. Write fully functional, clean file logic structures matching the architectural design. Output strict JSON:
 {
   "files": [
     { "path": "package.json", "content": "..." },
@@ -212,34 +268,33 @@ Respond with ONLY a clean JSON object structure containing an array of path/cont
     { "path": "test.js", "content": "..." }
   ]
 }`;
-      const codeOutput = await callAgentAPI(devInstruction, `Write full implementation files for this layout:\n${architectureLayout}`, true);
+      const codeOutput = await callAgentAPI(devInstruction, `Write implementations based on this architecture:\n${architectureLayout}`, true);
       const parsed = cleanAndParseJSON(codeOutput);
       const projectFiles: ProjectFile[] = parsed.files;
       setFiles(projectFiles);
       setSelectedFile(projectFiles[0] || null);
-      addLog(`Senior Developer completed base workspace code blocks. Generated ${projectFiles.length} source files.`);
+      addLog("Developer synthesis completed.");
 
       if (webcontainer) {
         await mountFilesToSandbox(projectFiles);
-        await runQATestingLoop(projectFiles, 1);
+        await runQALoop(projectFiles, 1);
       } else {
-        addLog("Sandbox execution environment offline. Packaging raw files.");
+        await saveProjectToSupabase(projectFiles);
         setCurrentStep('COMPLETED');
       }
     } catch (err: any) {
-      addLog(`Development Stage Failure: ${err.message}`);
+      addLog(`Development Failure: ${err.message}`);
       setCurrentStep('ARCHITECT_APPROVE');
     }
   };
 
   const mountFilesToSandbox = async (filesToMount: ProjectFile[]) => {
-    addLog("Mounting updated source codes into virtual system environment...");
     const tree: any = {};
     filesToMount.forEach(file => {
       const parts = file.path.split('/');
       let current = tree;
-      parts.forEach((part, index) => {
-        if (index === parts.length - 1) {
+      parts.forEach((part, idx) => {
+        if (idx === parts.length - 1) {
           current[part] = { file: { contents: file.content } };
         } else {
           if (!current[part]) current[part] = { directory: {} };
@@ -248,431 +303,402 @@ Respond with ONLY a clean JSON object structure containing an array of path/cont
       });
     });
     await webcontainer!.mount(tree);
-    addLog("In-memory sandbox mounting complete.");
   };
 
-  // --- STAGE 4: Autonomous QA/Test Self-Healing Loop ---
-  const runQATestingLoop = async (currentFiles: ProjectFile[], attempt: number) => {
+  const runQALoop = async (currentFiles: ProjectFile[], attempt: number) => {
     if (attempt > 3) {
-      addLog("Maximum autonomous refinement cycles achieved. Launching dev servers.");
-      await launchDevPreviewServer();
+      addLog("Maximum autonomous debugging attempts exceeded. Spinning dev servers...");
+      await startPreviewServer();
       return;
     }
 
     setCurrentStep('TEST_RUNNING');
-    addLog(`[Refinement Loop ${attempt}/3] Running automated unit test validations...`);
+    addLog(`[Refinement Run ${attempt}/3] Executing automated testing suites...`);
 
     try {
-      addLog("Executing sandbox install dependencies...");
       const install = await webcontainer!.spawn('npm', ['install']);
-      let installLogs = '';
-      install.output.pipeTo(new WritableStream({
-        write(chunk) { installLogs += chunk; }
-      }));
       await install.exit;
 
-      addLog("Running test suites...");
       const test = await webcontainer!.spawn('npm', ['test']);
       let testLogs = '';
       test.output.pipeTo(new WritableStream({
-        write(chunk) { testLogs += chunk; }
+        write(data) { testLogs += data; }
       }));
-      
       const exitCode = await test.exit;
       setTestOutput(testLogs);
 
       if (exitCode === 0) {
         addLog("✨ All automated unit tests passed successfully!");
-        await launchDevPreviewServer();
+        await saveProjectToSupabase(currentFiles);
+        await startPreviewServer();
       } else {
-        addLog(`⚠️ Automated tests failed. Contacting QA Agent to auto-heal & patch implementation...`);
-        
-        const qaInstruction = `You are a Senior Debugging Engineer. The unit test suite failed during validation checks. 
-Review the output failure logs:
----
-${testLogs}
----
-
-Correct the errors in your implementation. Readjust file logic mapping structures cleanly. 
-Return your complete, corrected project file structure as a strict JSON object mapping with NO conversational markdown:
-{
-  "files": [
-    { "path": "path/to/file", "content": "..." }
-  ]
-}`;
-        const patchText = await callAgentAPI(qaInstruction, `Current implementation context files: ${JSON.stringify(currentFiles)}`, true);
+        addLog(`❌ Code failed unit testing constraints. Contacting QA Agent to auto-heal...`);
+        const qaInstruction = `Analyze the test logs and patch the implementations. Output strict JSON files mapping. Logs:\n${testLogs}`;
+        const patchText = await callAgentAPI(qaInstruction, `Files:\n${JSON.stringify(currentFiles)}`, true);
         const parsedPatch = cleanAndParseJSON(patchText);
-        const patchedFiles: ProjectFile[] = parsedPatch.files;
+        const patchedFiles = parsedPatch.files;
 
         setFiles(patchedFiles);
         setSelectedFile(patchedFiles[0] || null);
         await mountFilesToSandbox(patchedFiles);
-        // Recurse loops
-        await runQATestingLoop(patchedFiles, attempt + 1);
+        await runQALoop(patchedFiles, attempt + 1);
       }
     } catch (err: any) {
-      addLog(`QA Loop encountered execution error: ${err.message}. Preserving build.`);
-      await launchDevPreviewServer();
+      addLog(`QA Automation Fault: ${err.message}. Saving progress.`);
+      await saveProjectToSupabase(currentFiles);
+      await startPreviewServer();
     }
   };
 
-  const launchDevPreviewServer = async () => {
-    addLog("Spawning workspace server processes...");
+  const startPreviewServer = async () => {
     try {
       webcontainer!.on('port', (port, type, url) => {
-        addLog(`Sandbox Web Preview active: ${url}`);
+        addLog(`Live Sandbox preview active at: ${url}`);
         setPreviewUrl(url);
         setActiveTab('preview');
         setCurrentStep('COMPLETED');
       });
-
-      // Spawns standard startup scripts defined in your packages configurations
       await webcontainer!.spawn('npm', ['run', 'start']);
     } catch (err: any) {
-      addLog(`Preview server failed to start: ${err.message}`);
+      addLog(`Server spin-up error: ${err.message}`);
       setCurrentStep('COMPLETED');
     }
   };
 
-  // --- Client-Side ZIP Packager ---
+  const saveProjectToSupabase = async (projectFiles: ProjectFile[]) => {
+    if (!session) return;
+    addLog("Archiving workspace files state into your Supabase profile...");
+    await supabase.from('projects').insert({
+      user_id: session.user.id,
+      title: repoName,
+      prompt,
+      spec: pmSpec,
+      architecture: architectureLayout,
+      files: projectFiles
+    });
+    fetchUserProjects(session.user.id);
+  };
+
+  const loadSavedProject = (project: SavedProject) => {
+    setRepoName(project.title);
+    setPrompt(project.prompt);
+    setPmSpec(project.spec);
+    setArchitectureLayout(project.architecture);
+    setFiles(project.files);
+    setSelectedFile(project.files[0] || null);
+    setCurrentStep('COMPLETED');
+    setActiveTab('code');
+    addLog(`Loaded archived project: ${project.title}`);
+  };
+
   const downloadClientZip = async () => {
-    try {
-      addLog("Packaging local repository workspace...");
-      const zip = new JSZip();
-      files.forEach(file => {
-        zip.file(file.path, file.content);
-      });
-      const content = await zip.generateAsync({ type: 'blob' });
-      const downloadLink = document.createElement('a');
-      downloadLink.href = URL.createObjectURL(content);
-      downloadLink.download = `${repoName}.zip`;
-      downloadLink.click();
-      addLog("Clean project ZIP package successfully generated and downloaded.");
-    } catch (err: any) {
-      alert(`Download failed: ${err.message}`);
-    }
+    const zip = new JSZip();
+    files.forEach(f => zip.file(f.path, f.content));
+    const data = await zip.generateAsync({ type: 'blob' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(data);
+    link.download = `${repoName}.zip`;
+    link.click();
   };
 
-  const handleLocalFileEdit = (newContent: string) => {
-    if (!selectedFile) return;
-    const updated = files.map(file => 
-      file.path === selectedFile.path ? { ...file, content: newContent } : file
+  // --- RENDERING VIEWS ---
+
+  // Logged-out Landing Page
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-[#030712] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        {/* Decorative Grid Mesh */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-30 pointer-events-none" />
+
+        <div className="max-w-2xl text-center space-y-6 z-10">
+          <div className="inline-flex items-center space-x-2 bg-slate-900 border border-slate-800 rounded-full px-4 py-1.5 text-xs text-indigo-400 font-semibold mb-2">
+            <Cpu size={14} className="animate-spin" />
+            <span>AI Software Development Agent</span>
+          </div>
+          
+          <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white leading-tight">
+            Compile Ideas Into <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-sky-400 to-emerald-400">Production Codebases</span>
+          </h1>
+          
+          <p className="text-slate-400 text-sm leading-relaxed max-w-lg mx-auto">
+            A professional multi-agent software engineering workspace. Generates, validates, and runs previews inside an isolated browser sandbox.
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-6">
+            <button 
+              onClick={() => handleOAuthLogin('github')}
+              className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-lg border border-slate-800 transition flex items-center justify-center gap-2 text-sm"
+            >
+              <Github size={18} /> Continue with GitHub
+            </button>
+            <button 
+              onClick={() => handleOAuthLogin('google')}
+              className="w-full sm:w-auto bg-white hover:bg-slate-100 text-slate-950 font-bold px-6 py-3 rounded-lg transition flex items-center justify-center gap-2 text-sm"
+            >
+              <Chrome size={18} /> Continue with Google
+            </button>
+          </div>
+        </div>
+      </div>
     );
-    setFiles(updated);
-    setSelectedFile({ ...selectedFile, content: newContent });
-    if (webcontainer) {
-      // Hot-update the browser sandbox filesystem
-      webcontainer.fs.writeFile(selectedFile.path, newContent);
-    }
-  };
+  }
 
+  // Active Multi-Agent Workspace UI
   return (
-    <div className="h-screen w-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none overflow-hidden">
+    <div className="h-screen w-screen bg-[#030712] text-slate-100 flex flex-col font-mono text-xs overflow-hidden select-none">
       
-      {/* Top Header Controls bar */}
-      <header className="h-14 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between px-6 z-10 shrink-0">
+      {/* Top Workspace Header Controls */}
+      <header className="h-14 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between px-6 shrink-0 z-10">
         <div className="flex items-center space-x-3">
-          <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-          <h1 className="text-sm font-bold tracking-widest text-indigo-400 uppercase">ForgeAgent Studio</h1>
-          <span className="text-xs text-slate-600">v7.0 Stable</span>
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          <h1 className="text-sm font-bold tracking-widest text-indigo-400 uppercase">FORGEAGENT OS // WORKSPACE</h1>
         </div>
 
-        {/* Configurations menu */}
         <div className="flex items-center space-x-4">
           <select 
             value={selectedModel} 
             onChange={e => setSelectedModel(e.target.value)}
-            className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
+            className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-slate-300 focus:outline-none focus:border-indigo-500"
           >
-            <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B Instruct</option>
+            <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
             <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
             <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-            <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
           </select>
 
           <input 
             type="password" 
-            placeholder="OpenRouter Token (sk-or-...)" 
+            placeholder="OpenRouter Token" 
             value={openRouterKey} 
             onChange={e => setOpenRouterKey(e.target.value)} 
-            className="bg-slate-900 border border-slate-800 rounded px-3 py-1 text-xs text-slate-300 w-48 focus:outline-none focus:border-indigo-500"
+            className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-slate-300 w-44 focus:outline-none focus:border-indigo-500"
           />
 
-          <button 
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-1.5 rounded hover:bg-slate-800 text-slate-400"
-          >
-            <Settings size={16} />
+          <button onClick={saveUserProfileKey} className="bg-slate-800 hover:bg-slate-700 font-bold text-slate-200 px-2 py-1 rounded">
+            Save Key
+          </button>
+
+          <button onClick={handleLogout} className="p-1.5 rounded hover:bg-slate-800 text-slate-400" title="Log Out">
+            <LogOut size={16} />
           </button>
         </div>
       </header>
 
-      {/* Main workspace panels structure */}
+      {/* Main panel layout */}
       <div className="flex flex-1 overflow-hidden relative">
         
-        {/* Dynamic Stepper Sidebar */}
-        <div className={`transition-all duration-300 shrink-0 border-r border-slate-800 bg-slate-900/10 flex flex-col ${isSidebarOpen ? 'w-[380px]' : 'w-0 overflow-hidden border-r-0'}`}>
-          <div className="p-4 border-b border-slate-800/60 space-y-3">
-            <span className="text-xs uppercase font-bold text-slate-400 tracking-wider">Project Specifications</span>
-            <input 
-              type="text" 
-              placeholder="Repository Workspace Title" 
-              value={repoName} 
-              onChange={e => setRepoName(e.target.value)} 
-              className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 text-indigo-300 font-mono"
-            />
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {currentStep === 'IDLE' ? (
-              <form onSubmit={startPipeline} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-xs text-slate-500 uppercase font-semibold">Blueprint Instructions</label>
-                  <textarea 
-                    value={prompt} 
-                    onChange={e => setPrompt(e.target.value)} 
-                    rows={6} 
-                    placeholder="Describe your game, web app, script, or utility in detail..." 
-                    className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-xs leading-relaxed focus:outline-none focus:border-indigo-500 resize-none font-sans"
-                  />
-                </div>
-                <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded text-xs uppercase tracking-wider transition flex items-center justify-center gap-2">
-                  <Play size={13} /> Compile Workspace Pipeline
-                </button>
-              </form>
-            ) : (
-              <div className="space-y-4">
-                {/* Visual Agent Stepper */}
-                <div className="border border-slate-800/80 rounded p-4 bg-slate-950/40 space-y-3">
-                  <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest block">Active Operations Pipeline</span>
-                  <div className="space-y-3 text-xs">
-                    {[
-                      { key: 'PM_SPEC', label: '1. Product Specification Output' },
-                      { key: 'ARCHITECT_DESIGN', label: '2. Systems Layout Schema' },
-                      { key: 'DEVELOPMENT', label: '3. Senior Developer Synthesis' },
-                      { key: 'TEST_RUNNING', label: '4. QA Test Self-Healing' }
-                    ].map((step, idx) => {
-                      const isActive = currentStep.startsWith(step.key) || currentStep === 'PM_APPROVE' && step.key === 'PM_SPEC' || currentStep === 'ARCHITECT_APPROVE' && step.key === 'ARCHITECT_DESIGN';
-                      return (
-                        <div key={idx} className={`flex items-center gap-3 ${isActive ? 'text-indigo-400 font-bold' : 'text-slate-600'}`}>
-                          <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-indigo-500' : 'bg-slate-800'}`} />
-                          <span>{step.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Milestone Interaction Gates */}
-                {currentStep === 'PM_APPROVE' && (
-                  <div className="p-4 rounded-lg border border-indigo-900 bg-indigo-950/20 space-y-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
-                      <ClipboardList size={14} /> Spec Sign-off Required
-                    </h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">Review the PM Specification document on the right. Provide refinement requests or approve to proceed.</p>
-                    <textarea 
-                      value={feedback} 
-                      onChange={e => setFeedback(e.target.value)} 
-                      placeholder="e.g., Support responsive grid patterns..." 
-                      className="w-full h-16 bg-slate-950 border border-slate-800 rounded p-2 text-xs focus:outline-none resize-none font-sans"
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => handlePmReview(false)} className="bg-slate-900 hover:bg-slate-800 py-2 rounded text-xs font-semibold text-slate-300">Request Changes</button>
-                      <button onClick={() => handlePmReview(true)} className="bg-indigo-600 hover:bg-indigo-500 py-2 rounded text-xs font-semibold text-white">Approve & Design</button>
-                    </div>
-                  </div>
-                )}
-
-                {currentStep === 'ARCHITECT_APPROVE' && (
-                  <div className="p-4 rounded-lg border border-indigo-900 bg-indigo-950/20 space-y-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
-                      <Layers size={14} /> Structure Sign-off Required
-                    </h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">Ensure the proposed directories and database structures are aligned before the developers begin coding.</p>
-                    <textarea 
-                      value={feedback} 
-                      onChange={e => setFeedback(e.target.value)} 
-                      placeholder="e.g., Include vitest dependencies..." 
-                      className="w-full h-16 bg-slate-950 border border-slate-800 rounded p-2 text-xs focus:outline-none resize-none font-sans"
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => handleArchitectReview(false)} className="bg-slate-900 hover:bg-slate-800 py-2 rounded text-xs font-semibold text-slate-300">Request Changes</button>
-                      <button onClick={() => handleArchitectReview(true)} className="bg-indigo-600 hover:bg-indigo-500 py-2 rounded text-xs font-semibold text-white">Approve & Code</button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Reset Trigger */}
-                {currentStep === 'COMPLETED' && (
-                  <button 
-                    onClick={() => { setCurrentStep('IDLE'); setFiles([]); setSelectedFile(null); setPmSpec(''); setArchitectureLayout(''); }} 
-                    className="w-full bg-slate-900 hover:bg-slate-850 py-2 rounded text-xs text-slate-300 border border-slate-800 uppercase tracking-wider"
-                  >
-                    Start New Blueprint Build
-                  </button>
-                )}
-              </div>
+        {/* Left Side Controller Panel */}
+        <div className="w-[380px] border-r border-slate-800 bg-slate-900/10 flex flex-col shrink-0 overflow-y-auto p-4 space-y-4">
+          
+          <form onSubmit={startPipeline} className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs uppercase font-bold text-slate-400 tracking-wider">Application Blueprint instructions</label>
+              <textarea 
+                value={prompt} 
+                onChange={e => setPrompt(e.target.value)} 
+                rows={4} 
+                disabled={currentStep !== 'IDLE'}
+                placeholder="Detail what you would like to build..." 
+                className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-xs leading-relaxed focus:outline-none focus:border-indigo-500 resize-none font-sans"
+              />
+            </div>
+            {currentStep === 'IDLE' && (
+              <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded text-xs tracking-wider uppercase transition">
+                Build Application Workspace
+              </button>
             )}
-          </div>
+          </form>
+
+          {/* Stepper Pipeline Indicators */}
+          {currentStep !== 'IDLE' && (
+            <div className="border border-slate-800 rounded p-4 bg-slate-950/40 space-y-3">
+              <span className="text-[10px] uppercase text-slate-500 font-bold tracking-widest block">Active Operations Pipeline</span>
+              <div className="space-y-2 text-slate-400">
+                <div className={`flex items-center gap-2 ${currentStep === 'PM_SPEC' || currentStep === 'PM_APPROVE' ? 'text-indigo-400 font-bold' : ''}`}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-current" />
+                  <span>PM Specification Mapping</span>
+                </div>
+                <div className={`flex items-center gap-2 ${currentStep === 'ARCHITECT_DESIGN' || currentStep === 'ARCHITECT_APPROVE' ? 'text-indigo-400 font-bold' : ''}`}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-current" />
+                  <span>Architecture Structures Design</span>
+                </div>
+                <div className={`flex items-center gap-2 ${currentStep === 'DEVELOPMENT' ? 'text-indigo-400 font-bold' : ''}`}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-current" />
+                  <span>Senior Developer Code Synthesis</span>
+                </div>
+                <div className={`flex items-center gap-2 ${currentStep === 'TEST_RUNNING' ? 'text-indigo-400 font-bold' : ''}`}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-current" />
+                  <span>QA Self-Healing Validation Loops</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Interactive Approval Gates */}
+          {currentStep === 'PM_APPROVE' && (
+            <div className="p-4 rounded-lg border border-indigo-900 bg-indigo-950/20 space-y-3">
+              <h3 className="text-xs font-bold uppercase text-indigo-400 flex items-center gap-1"><ClipboardList size={14} /> Spec Review Requested</h3>
+              <p className="text-[11px] text-slate-400">Please review the specifications document on the right pane.</p>
+              <textarea 
+                value={feedback} 
+                onChange={e => setFeedback(e.target.value)} 
+                placeholder="Specify requirements to refine..." 
+                className="w-full h-16 bg-slate-950 border border-slate-800 rounded p-2 text-xs focus:outline-none resize-none font-sans"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => handlePmReview(false)} className="bg-slate-900 hover:bg-slate-800 py-1.5 rounded text-xs font-semibold">Refine Spec</button>
+                <button onClick={() => handlePmReview(true)} className="bg-indigo-600 hover:bg-indigo-500 py-1.5 rounded text-xs font-semibold">Approve & Design</button>
+              </div>
+            </div>
+          )}
+
+          {currentStep === 'ARCHITECT_APPROVE' && (
+            <div className="p-4 rounded-lg border border-indigo-900 bg-indigo-950/20 space-y-3">
+              <h3 className="text-xs font-bold uppercase text-indigo-400 flex items-center gap-1"><Layers size={14} /> Architecture Review Requested</h3>
+              <p className="text-[11px] text-slate-400">Review the workspace systems and directory architectures.</p>
+              <textarea 
+                value={feedback} 
+                onChange={e => setFeedback(e.target.value)} 
+                placeholder="Request stack adjustments..." 
+                className="w-full h-16 bg-slate-950 border border-slate-800 rounded p-2 text-xs focus:outline-none resize-none font-sans"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => handleArchitectReview(false)} className="bg-slate-900 hover:bg-slate-800 py-1.5 rounded text-xs font-semibold">Refine Schema</button>
+                <button onClick={() => handleArchitectReview(true)} className="bg-indigo-600 hover:bg-indigo-500 py-1.5 rounded text-xs font-semibold">Approve & Code</button>
+              </div>
+            </div>
+          )}
+
+          {/* Historical Saved Projects Panel */}
+          {savedProjects.length > 0 && (
+            <div className="border border-slate-800 rounded p-3 space-y-2 bg-slate-950/40">
+              <span className="text-[10px] uppercase text-slate-500 font-bold tracking-wider flex items-center gap-1.5"><History size={12} /> Archived Builds</span>
+              <div className="space-y-1 overflow-y-auto max-h-40">
+                {savedProjects.map((proj) => (
+                  <button 
+                    key={proj.id} 
+                    onClick={() => loadSavedProject(proj)}
+                    className="w-full flex items-center space-x-2 px-2 py-1.5 rounded text-left text-[11px] text-slate-400 hover:bg-slate-900 hover:text-white transition font-mono truncate"
+                  >
+                    <FolderGit2 size={12} className="text-indigo-400" />
+                    <span className="truncate">{proj.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
 
-        {/* Workspace Panels Grid Layout */}
+        {/* Right Side Working Canvas Panel */}
         <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
           
-          {/* Workspace Tabs controls */}
           <div className="h-10 border-b border-slate-800 bg-slate-900/20 flex items-center justify-between px-6 shrink-0">
             <div className="flex space-x-2">
-              <button 
-                onClick={() => setActiveTab('logs')} 
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition font-semibold ${activeTab === 'logs' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-              >
-                <TerminalIcon size={12} /> Live Compilation logs
+              <button onClick={() => setActiveTab('logs')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${activeTab === 'logs' ? 'bg-slate-800 text-white' : 'text-slate-400'}`}>
+                <TerminalIcon size={12} /> Console Output
               </button>
-              <button 
-                onClick={() => { setActiveTab('code'); if (files.length > 0 && !selectedFile) setSelectedFile(files[0]); }} 
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition font-semibold ${activeTab === 'code' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-              >
-                <Code size={12} /> File Tree & Editor
+              <button onClick={() => setActiveTab('code')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${activeTab === 'code' ? 'bg-slate-800 text-white' : 'text-slate-400'}`}>
+                <Code size={12} /> File Explorer
               </button>
-              <button 
-                onClick={() => setActiveTab('preview')} 
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition font-semibold ${activeTab === 'preview' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-              >
-                <Eye size={12} /> Local Live Preview
+              <button onClick={() => setActiveTab('preview')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${activeTab === 'preview' ? 'bg-slate-800 text-white' : 'text-slate-400'}`}>
+                <Eye size={12} /> Browser Preview
               </button>
             </div>
 
-            {/* ZIP download button */}
             {files.length > 0 && (
-              <button 
-                onClick={downloadClientZip}
-                className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold transition"
-              >
-                <Download size={12} /> Get Project ZIP
+              <button onClick={downloadClientZip} className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold transition">
+                <Download size={12} /> Download ZIP
               </button>
             )}
           </div>
 
-          {/* Active Panel Body */}
-          <div className="flex-1 overflow-hidden relative">
-            
-            {/* Log / Blueprint Display */}
+          <div className="flex-1 overflow-hidden relative p-4">
             {activeTab === 'logs' && (
-              <div className="h-full p-4 overflow-y-auto space-y-4 font-mono text-xs">
-                
-                {/* Console Output Block */}
-                <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 flex flex-col h-64 shadow-inner">
-                  <span className="text-[10px] text-slate-500 uppercase border-b border-slate-800/80 pb-2 mb-2 block tracking-wider">Console output terminals</span>
-                  <div className="flex-1 overflow-y-auto space-y-1.5 text-slate-300">
-                    {logs.map((log, i) => <div key={i}>{log}</div>)}
-                    <div ref={logsEndRef} />
-                  </div>
+              <div className="h-full flex flex-col space-y-4 overflow-y-auto">
+                <div className="bg-slate-950 border border-slate-800 rounded p-4 h-60 overflow-y-auto font-mono text-slate-300">
+                  <span className="text-[10px] text-slate-500 block border-b border-slate-800 pb-2 mb-2">SYSTEM TELEMETRY ENGINE LOGGER</span>
+                  {logs.map((log, index) => <div key={index}>{log}</div>)}
+                  <div ref={logsEndRef} />
                 </div>
 
-                {/* Technical Docs Block */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
                   {pmSpec && (
-                    <div className="bg-slate-900/20 border border-slate-800 rounded-lg p-4 space-y-2 h-[450px] overflow-y-auto">
-                      <span className="text-indigo-400 font-bold flex items-center gap-1 border-b border-slate-800 pb-2 text-xs uppercase tracking-wider">
-                        <ClipboardList size={13} /> PM Product Specs Document
-                      </span>
-                      <div className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed pt-2 font-sans">{pmSpec}</div>
+                    <div className="bg-slate-900/10 border border-slate-800 rounded p-4 h-80 overflow-y-auto">
+                      <span className="text-indigo-400 font-bold block border-b border-slate-800 pb-2 mb-2 uppercase tracking-wider text-xs">Specification Markdown Doc</span>
+                      <div className="text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed pt-2 font-sans">{pmSpec}</div>
                     </div>
                   )}
 
                   {architectureLayout && (
-                    <div className="bg-slate-900/20 border border-slate-800 rounded-lg p-4 space-y-2 h-[450px] overflow-y-auto">
-                      <span className="text-indigo-400 font-bold flex items-center gap-1 border-b border-slate-800 pb-2 text-xs uppercase tracking-wider">
-                        <Layers size={13} /> Architecture Directory Schema
-                      </span>
-                      <div className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed pt-2">{architectureLayout}</div>
+                    <div className="bg-slate-900/10 border border-slate-800 rounded p-4 h-80 overflow-y-auto">
+                      <span className="text-indigo-400 font-bold block border-b border-slate-800 pb-2 mb-2 uppercase tracking-wider text-xs">Architect System Schema</span>
+                      <div className="text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed pt-2">{architectureLayout}</div>
                     </div>
                   )}
                 </div>
-
               </div>
             )}
 
-            {/* Code Explorer & Editor */}
             {activeTab === 'code' && (
-              <div className="h-full flex overflow-hidden">
-                {/* Visual File Tree column */}
-                <div className="w-64 border-r border-slate-800 bg-slate-900/10 flex flex-col p-3 space-y-3 shrink-0">
-                  <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Active Workspace Files</span>
-                  <div className="flex-1 overflow-y-auto space-y-1">
-                    {files.map((file, idx) => (
-                      <button 
-                        key={idx} 
-                        onClick={() => setSelectedFile(file)}
-                        className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded text-left text-xs font-mono transition ${selectedFile?.path === file.path ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'}`}
-                      >
-                        <FileCode size={13} className={selectedFile?.path === file.path ? 'text-indigo-400' : 'text-slate-500'} />
-                        <span className="truncate">{file.path}</span>
-                      </button>
-                    ))}
-                  </div>
+              <div className="h-full flex overflow-hidden border border-slate-800 rounded bg-slate-900/10">
+                <div className="w-56 border-r border-slate-800 p-3 space-y-2 shrink-0 overflow-y-auto">
+                  <span className="text-[10px] uppercase text-slate-500 font-bold block mb-2">Workspace Tree</span>
+                  {files.map((file, idx) => (
+                    <button 
+                      key={idx} 
+                      onClick={() => setSelectedFile(file)}
+                      className={`w-full flex items-center space-x-2 px-2 py-1.5 rounded text-left text-xs ${selectedFile?.path === file.path ? 'bg-slate-800 text-white font-bold' : 'text-slate-400'}`}
+                    >
+                      <FileCode size={12} />
+                      <span className="truncate">{file.path}</span>
+                    </button>
+                  ))}
                 </div>
 
-                {/* Code Editor Column */}
                 <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 font-mono text-xs">
                   {selectedFile ? (
-                    <div className="flex-1 flex flex-col overflow-hidden">
-                      <div className="h-9 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between px-4 shrink-0">
-                        <span className="text-slate-400 font-bold text-[11px]">{selectedFile.path}</span>
-                        <span className="text-[10px] text-emerald-500 flex items-center gap-1 uppercase font-bold">
-                          <Check size={10} /> Editable active file
-                        </span>
-                      </div>
-                      <textarea 
-                        value={selectedFile.content}
-                        onChange={e => handleLocalFileEdit(e.target.value)}
-                        className="flex-1 bg-slate-950 text-emerald-400 p-4 focus:outline-none resize-none overflow-auto leading-relaxed whitespace-pre font-mono"
-                        spellCheck="false"
-                      />
-                    </div>
+                    <textarea 
+                      value={selectedFile.content}
+                      onChange={e => {
+                        const updatedContent = e.target.value;
+                        const updatedFiles = files.map(f => f.path === selectedFile.path ? { ...f, content: updatedContent } : f);
+                        setFiles(updatedFiles);
+                        setSelectedFile({ ...selectedFile, content: updatedContent });
+                        if (webcontainer) webcontainer.fs.writeFile(selectedFile.path, updatedContent);
+                      }}
+                      className="flex-1 bg-slate-950 text-emerald-400 p-4 focus:outline-none resize-none overflow-auto leading-relaxed whitespace-pre font-mono"
+                      spellCheck="false"
+                    />
                   ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-slate-600 italic">
-                      // Initialize workspace to display code files.
+                    <div className="flex-1 flex items-center justify-center italic text-slate-600">
+                      // Select files from the navigation pane to view implementation code.
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {/* Sandbox Live Web Preview */}
             {activeTab === 'preview' && (
-              <div className="h-full w-full flex flex-col bg-white">
+              <div className="h-full w-full bg-white rounded border border-slate-800 overflow-hidden relative">
                 {previewUrl ? (
-                  <iframe src={previewUrl} className="w-full flex-1 border-0" />
+                  <iframe src={previewUrl} className="w-full h-full border-0" />
                 ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 space-y-4 p-6">
-                    <div className="flex flex-col items-center space-y-2">
-                      <RefreshCw className="animate-spin text-indigo-500" size={24} />
-                      <span className="text-xs text-slate-400 font-mono">Launching Sandbox Server port channels...</span>
-                    </div>
-                    {testOutput && (
-                      <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-xs shadow-lg">
-                        <span className="text-rose-400 font-bold block border-b border-slate-800 pb-2 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-                          <AlertTriangle size={14} /> System unit-test error logs detected
-                        </span>
-                        <div className="text-slate-300 whitespace-pre-wrap overflow-y-auto max-h-64 leading-relaxed">{testOutput}</div>
-                      </div>
-                    )}
+                  <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center space-y-3">
+                    <RefreshCw className="animate-spin text-indigo-500" size={24} />
+                    <span className="text-slate-400">Compiling sandbox testing variables...</span>
                   </div>
                 )}
               </div>
             )}
-
           </div>
         </div>
 
       </div>
 
-      {/* Booting Sandbox Loader Overlay */}
       {isBootingSandbox && (
-        <div className="absolute inset-0 bg-slate-950/90 z-50 flex flex-col items-center justify-center space-y-3 font-mono text-xs">
-          <RefreshCw className="animate-spin text-indigo-500" size={32} />
-          <span className="text-slate-400">Loading Node.js WebAssembly compiler sandbox...</span>
+        <div className="absolute inset-0 bg-slate-950/90 z-50 flex flex-col items-center justify-center space-y-2">
+          <RefreshCw className="animate-spin text-indigo-500" size={24} />
+          <span className="text-slate-400">Loading system development compiler layers...</span>
         </div>
       )}
     </div>
