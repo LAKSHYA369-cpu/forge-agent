@@ -6,6 +6,7 @@ import { WebContainer } from '@webcontainer/api';
 import JSZip from 'jszip';
 import { 
   Terminal as TerminalIcon, 
+  Send, 
   Play, 
   RefreshCw, 
   Layers, 
@@ -35,13 +36,8 @@ import {
   ArrowRight,
   UserCheck,
   ChevronRight,
-  ChevronLeft,
-  Send
+  ChevronLeft
 } from 'lucide-react';
-
-const supabaseUrl = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_SUPABASE_URL || '') : '';
-const supabaseAnonKey = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '') : '';
-const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 type Step = 'IDLE' | 'PM_SPEC' | 'PM_APPROVE' | 'ARCHITECT_DESIGN' | 'ARCHITECT_APPROVE' | 'DEVELOPMENT' | 'TEST_RUNNING' | 'COMPLETED';
 
@@ -74,6 +70,7 @@ interface ChatMessage {
 }
 
 export default function Workspace() {
+  const [supabase, setSupabase] = useState<any>(null);
   const [session, setSession] = useState<any>(null);
   const [useLocalAuth, setUseLocalAuth] = useState(false);
   const [openRouterKey, setOpenRouterKey] = useState('');
@@ -81,7 +78,7 @@ export default function Workspace() {
   const [repoName, setRepoName] = useState('forge-application');
   const [selectedModel, setSelectedModel] = useState('meta-llama/llama-3.3-70b-instruct');
 
-  // Multi-Agent State transitions
+  // Multi-Agent Pipeline States
   const [currentStep, setCurrentStep] = useState<Step>('IDLE');
   const [logs, setLogs] = useState<string[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -117,31 +114,47 @@ export default function Workspace() {
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const writeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Monitor Auth Sessions
+  // Safe Client-Side Client Initialization
   useEffect(() => {
-    if (!supabase) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!url || !key) {
       setUseLocalAuth(true);
       const localUser = localStorage.getItem('forge_local_session');
       if (localUser) {
         setSession({ user: JSON.parse(localUser) });
-        fetchLocalProjects();
+        const localProj = localStorage.getItem('forge_local_projects');
+        if (localProj) setSavedProjects(JSON.parse(localProj));
       }
+      addLog("Database credentials missing. Running in local bypass mode.");
       return;
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const client = createClient(url, key);
+    setSupabase(client);
+
+    client.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
-        fetchUserProfile(session.user.id);
-        fetchUserProjects(session.user.id);
+        client.from('profiles').select('openrouter_key').eq('id', session.user.id).single().then(({ data }) => {
+          if (data?.openrouter_key) setOpenRouterKey(data.openrouter_key);
+        });
+        client.from('projects').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).then(({ data }) => {
+          if (data) setSavedProjects(data as SavedProject[]);
+        });
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        fetchUserProfile(session.user.id);
-        fetchUserProjects(session.user.id);
+        client.from('profiles').select('openrouter_key').eq('id', session.user.id).single().then(({ data }) => {
+          if (data?.openrouter_key) setOpenRouterKey(data.openrouter_key);
+        });
+        client.from('projects').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).then(({ data }) => {
+          if (data) setSavedProjects(data as SavedProject[]);
+        });
       }
     });
 
@@ -192,6 +205,7 @@ export default function Workspace() {
       {
         id: Math.random().toString(),
         sender,
+        avatarColor: color,
         content,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
@@ -205,41 +219,6 @@ export default function Workspace() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
   }, []);
-
-  // DB Accessors
-  const fetchUserProfile = async (userId: string) => {
-    if (!supabase) return;
-    const { data } = await supabase.from('profiles').select('openrouter_key').eq('id', userId).single();
-    if (data?.openrouter_key) setOpenRouterKey(data.openrouter_key);
-  };
-
-  const fetchUserProjects = async (userId: string) => {
-    if (!supabase) return;
-    const { data } = await supabase.from('projects').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (data) setSavedProjects(data as SavedProject[]);
-  };
-
-  const fetchLocalProjects = () => {
-    const data = localStorage.getItem('forge_local_projects');
-    if (data) setSavedProjects(JSON.parse(data));
-  };
-
-  const saveLocalProject = (newProject: SavedProject) => {
-    const localProj = localStorage.getItem('forge_local_projects');
-    const existing: SavedProject[] = localProj ? JSON.parse(localProj) : [];
-    const updated = [newProject, ...existing];
-    localStorage.setItem('forge_local_projects', JSON.stringify(updated));
-    setSavedProjects(updated);
-  };
-
-  const handleLocalBypassLogin = () => {
-    const mockUser = { id: 'local_dev_user', email: 'offline-developer@forge.local' };
-    localStorage.setItem('forge_local_session', JSON.stringify(mockUser));
-    setSession({ user: mockUser });
-    fetchLocalProjects();
-    addLog("Sandbox session initiated in Local Mode.");
-    showToast("Logged in via bypass mode", "success");
-  };
 
   const saveUserProfileKey = async () => {
     if (!session) return;
@@ -308,7 +287,7 @@ export default function Workspace() {
     }
     setCurrentStep('PM_SPEC');
     addLog("Product Manager Agent analyzing user blueprint directives...");
-    setChatHistory([]); // Reset conversation thread on new start
+    setChatHistory([]); 
     addChatMessage('User', prompt, 'bg-indigo-500');
     addChatMessage('Product Manager', 'Analyzing your app blueprint requirements. Designing the Technical Specifications outline now...', 'bg-indigo-400');
     setActiveTab('logs');
@@ -346,7 +325,6 @@ export default function Workspace() {
       return;
     }
 
-    // Step 2: Move to Systems Architecture design
     addChatMessage('User', "Technical Specification Approved.", 'bg-indigo-500');
     setCurrentStep('ARCHITECT_DESIGN');
     addLog("Spec approved. Contacting Software Architect Agent...");
@@ -386,7 +364,6 @@ export default function Workspace() {
     runDevelopmentPipeline();
   };
 
-  // --- Step 3: Senior Developer Synthesis ---
   const runDevelopmentPipeline = async () => {
     setCurrentStep('DEVELOPMENT');
     addLog("Architect structures approved. Deploying Senior Developer synthesizer...");
@@ -433,7 +410,6 @@ Return your complete, corrected project file structure as a strict JSON object m
     }
   };
 
-  // --- Step 4: QA/Self-Healing Refinement Loops ---
   const runQALoop = async (currentFiles: ProjectFile[], attempt: number) => {
     if (attempt > 3) {
       addLog("Maximum autonomous debugging attempts exceeded. Spinning dev servers...");
@@ -551,7 +527,6 @@ Return your complete, corrected project file structure as a strict JSON object m
     setActiveTab('logs');
     addLog(`Retrieved project archive: ${project.title}`);
     
-    // Populate chat simulation log for historical load
     setChatHistory([
       { id: '1', sender: 'User', avatarColor: 'bg-indigo-500', content: project.prompt, timestamp: 'Archived' },
       { id: '2', sender: 'Product Manager', avatarColor: 'bg-indigo-400', content: `Retrieved specification layout from files mapping:\n\n${project.spec.substring(0, 150)}...`, timestamp: 'Archived' },
@@ -587,68 +562,6 @@ Return your complete, corrected project file structure as a strict JSON object m
     ));
   };
 
-  const handleCreateFile = async () => {
-    if (!newFilePath.trim()) return;
-    const exists = files.some(f => f.path === newFilePath);
-    if (exists) {
-      showToast("A file with that path already exists.", "error");
-      return;
-    }
-    const newFile: ProjectFile = { path: newFilePath, content: '' };
-    const updatedFiles = [...files, newFile];
-    setFiles(updatedFiles);
-    
-    if (!openTabs.includes(newFilePath)) {
-      setOpenTabs(prev => [...prev, newFilePath]);
-    }
-    setActiveTabFile(newFilePath);
-    setNewFilePath('');
-    setShowNewFileInput(false);
-    
-    if (webcontainer) {
-      await safeWriteSandboxFile(webcontainer, newFilePath, '');
-    }
-    showToast(`Created file: ${newFilePath}`, "success");
-  };
-
-  const handleDeleteFile = async (path: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updatedFiles = files.filter(f => f.path !== path);
-    setFiles(updatedFiles);
-    
-    const updatedTabs = openTabs.filter(t => t !== path);
-    setOpenTabs(updatedTabs);
-    
-    if (activeTabFile === path) {
-      setActiveTabFile(updatedTabs.length > 0 ? updatedTabs[0] : null);
-    }
-    
-    if (webcontainer) {
-      await webcontainer.fs.rm(path);
-    }
-    showToast(`Deleted file: ${path}`, "info");
-  };
-
-  const handleOpenTab = (path: string) => {
-    if (!openTabs.includes(path)) {
-      setOpenTabs(prev => [...prev, path]);
-    }
-    setActiveTabFile(path);
-  };
-
-  const handleCloseTab = (path: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updatedTabs = openTabs.filter(t => t !== path);
-    setOpenTabs(updatedTabs);
-    if (activeTabFile === path) {
-      setActiveTabFile(updatedTabs.length > 0 ? updatedTabs[0] : null);
-    }
-  };
-
-  const getActiveFileObj = () => {
-    return files.find(f => f.path === activeTabFile) || null;
-  };
-
   const handleEditorChange = (val: string) => {
     if (!activeTabFile) return;
     
@@ -658,7 +571,7 @@ Return your complete, corrected project file structure as a strict JSON object m
     if (writeTimeoutRef.current) clearTimeout(writeTimeoutRef.current);
     writeTimeoutRef.current = setTimeout(async () => {
       if (webcontainer) {
-        await webcontainer.fs.writeFile(activeTabFile, val);
+        await webcontainer.fs.writeFile(activeTabFile!, val);
       }
     }, 350); 
   };
@@ -746,7 +659,7 @@ Return your complete, corrected project file structure as a strict JSON object m
           <select 
             value={selectedModel} 
             onChange={e => setSelectedModel(e.target.value)}
-            className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-300 focus:outline-none focus:border-indigo-500 font-mono"
+            className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-350 focus:outline-none focus:border-indigo-500 font-mono"
           >
             <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
             <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
@@ -785,7 +698,7 @@ Return your complete, corrected project file structure as a strict JSON object m
       {/* Main Workspace split views */}
       <div className="flex flex-1 overflow-hidden relative">
         
-        {/* Panel 1: Collapsible Agent Controller sidebar */}
+        {/* Panel 1: Collapsible Agent Unified Chat Console sidebar */}
         <div className={`transition-all duration-300 shrink-0 border-r border-zinc-800 bg-zinc-900/5 flex flex-col ${isSidebarOpen ? 'w-[360px]' : 'w-0 overflow-hidden border-r-0'}`}>
           <div className="p-4 border-b border-zinc-800/60 space-y-3 shrink-0">
             <span className="text-xs uppercase font-bold text-zinc-400 tracking-wider">Project Specifications</span>
@@ -1097,7 +1010,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                           <span className="text-rose-400 font-bold block border-b border-zinc-855 pb-2 mb-2 uppercase tracking-wide flex items-center gap-1.5">
                             <AlertTriangle size={14} /> Sandbox unit testing errors detected
                           </span>
-                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-48 leading-relaxed">{testOutput}</div>
+                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-40 leading-relaxed">{testOutput}</div>
                         </div>
                       )}
                     </div>
