@@ -1,8 +1,9 @@
 import React from 'react';
+import './globals.css';
 
 export const metadata = {
-  title: 'Forge-Agent OS',
-  description: 'Autonomous Developer Platform Core Engine',
+  title: 'ForgeAgent Studio OS',
+  description: 'Enterprise Multi-Agent Software Development Platform',
 };
 
 export default function RootLayout({
@@ -11,8 +12,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body style={{ margin: 0, padding: 0, background: '#0b0f19' }}>
+    <html lang="en" className="dark">
+      <body className="bg-slate-950 text-slate-100 antialiased">
         {children}
       </body>
     </html>
