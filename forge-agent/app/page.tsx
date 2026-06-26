@@ -33,7 +33,10 @@ import {
   Disc,
   MessageSquare,
   ArrowRight,
-  UserCheck
+  UserCheck,
+  ChevronRight,
+  ChevronLeft,
+  Send
 } from 'lucide-react';
 
 const supabaseUrl = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_SUPABASE_URL || '') : '';
@@ -677,6 +680,57 @@ Return your complete, corrected project file structure as a strict JSON object m
 
   const activeAgent = getActiveAgentHUD();
 
+  // Logged-out Landing Hero
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        {/* Glowing Background Radial Accents */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute inset-0 bg-[radial-gradient(#18181b_1px,transparent_1px)] [background-size:16px_16px] opacity-40 pointer-events-none" />
+
+        <div className="max-w-xl text-center space-y-8 z-10">
+          <div className="inline-flex items-center space-x-2 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-1.5 text-xs text-indigo-400 font-semibold shadow-inner">
+            <Sparkles size={13} className="text-indigo-400" />
+            <span>Autonomous Software Engineer OS</span>
+          </div>
+          
+          <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white leading-tight">
+            Deploy Complex App Ideas <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-sky-400 to-emerald-400">In Browser Sandbox</span>
+          </h1>
+          
+          <p className="text-zinc-400 text-sm leading-relaxed max-w-md mx-auto font-sans">
+            A visual development workbench. Runs file compilers, executes unit tests, and serves live hot-reloaded previews in real time.
+          </p>
+
+          {/* Centered OAuth Controls */}
+          <div className="flex flex-col gap-2.5 max-w-sm mx-auto pt-4 w-full">
+            <div className="grid grid-cols-2 gap-2">
+              <button 
+                onClick={() => handleOAuthLogin('github')}
+                className="bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-2.5 rounded-lg border border-zinc-800 transition flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider"
+              >
+                <Github size={14} /> GitHub
+              </button>
+              <button 
+                onClick={() => handleOAuthLogin('discord')}
+                className="bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 font-bold py-2.5 rounded-lg border border-indigo-900/30 transition flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider shadow-md shadow-indigo-950/20"
+              >
+                <Disc size={14} /> Discord
+              </button>
+            </div>
+            <button 
+              onClick={handleLocalBypassLogin}
+              className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:opacity-95 text-white font-bold px-6 py-3 rounded-lg transition flex items-center justify-center gap-2 text-xs uppercase tracking-wider shadow-lg shadow-indigo-600/20"
+            >
+              <PlayCircle size={16} /> Bypass database setup
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Active Production Workspace
   return (
     <div className="h-screen w-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans text-xs overflow-hidden select-none">
       
@@ -731,7 +785,7 @@ Return your complete, corrected project file structure as a strict JSON object m
       {/* Main Workspace split views */}
       <div className="flex flex-1 overflow-hidden relative">
         
-        {/* Panel 1: Collapsible Agent Unified Chat Console sidebar */}
+        {/* Panel 1: Collapsible Agent Controller sidebar */}
         <div className={`transition-all duration-300 shrink-0 border-r border-zinc-800 bg-zinc-900/5 flex flex-col ${isSidebarOpen ? 'w-[360px]' : 'w-0 overflow-hidden border-r-0'}`}>
           <div className="p-4 border-b border-zinc-800/60 space-y-3 shrink-0">
             <span className="text-xs uppercase font-bold text-zinc-400 tracking-wider">Project Specifications</span>
@@ -821,7 +875,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                       className="w-full h-16 bg-zinc-950 border border-zinc-800 rounded p-2 text-xs focus:outline-none resize-none font-sans text-zinc-300"
                     />
                     <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => handleArchitectReview(false)} className="bg-zinc-900 hover:bg-zinc-850 py-1.5 rounded text-[10px] font-bold uppercase border border-zinc-800">Request Changes</button>
+                      <button onClick={() => handleArchitectReview(false)} className="bg-zinc-900 hover:bg-zinc-855 py-1.5 rounded text-[10px] font-bold uppercase border border-zinc-800">Request Changes</button>
                       <button onClick={() => handleArchitectReview(true)} className="bg-indigo-600 hover:bg-indigo-500 py-1.5 rounded text-[10px] font-bold uppercase text-white">Approve Design</button>
                     </div>
                   </div>
@@ -860,9 +914,9 @@ Return your complete, corrected project file structure as a strict JSON object m
         {/* Sidebar Toggle handle */}
         <button 
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="absolute left-0 bottom-4 z-20 bg-zinc-900 border border-l-0 border-zinc-800 hover:bg-zinc-800 text-zinc-400 h-8 w-6 flex items-center justify-center rounded-r cursor-pointer"
+          className="absolute left-0 bottom-4 z-25 bg-zinc-900 border border-l-0 border-zinc-800 hover:bg-zinc-800 text-zinc-400 h-8 w-6 flex items-center justify-center rounded-r cursor-pointer"
         >
-          <ChevronRight size={16} />
+          {isSidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
         </button>
 
         {/* Right workspace panels container */}
@@ -988,12 +1042,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                           ref={codeEditorRef}
                           value={getActiveFileObj()!.content}
                           onScroll={handleEditorScroll}
-                          onChange={e => {
-                            const val = e.target.value;
-                            const updated = files.map(f => f.path === activeTabFile ? { ...f, content: val } : f);
-                            setFiles(updated);
-                            if (webcontainer) webcontainer.fs.writeFile(activeTabFile!, val);
-                          }}
+                          onChange={e => handleEditorChange(e.target.value)}
                           className="flex-1 bg-transparent text-emerald-400/95 p-4 focus:outline-none resize-none overflow-auto whitespace-pre font-mono leading-relaxed h-full border-none outline-none selection:bg-indigo-500/20"
                           spellCheck="false"
                         />
@@ -1048,7 +1097,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                           <span className="text-rose-400 font-bold block border-b border-zinc-855 pb-2 mb-2 uppercase tracking-wide flex items-center gap-1.5">
                             <AlertTriangle size={14} /> Sandbox unit testing errors detected
                           </span>
-                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-40 leading-relaxed">{testOutput}</div>
+                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-48 leading-relaxed">{testOutput}</div>
                         </div>
                       )}
                     </div>
