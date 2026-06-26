@@ -16,7 +16,7 @@ export async function POST(request: Request) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${openRouterKey}`,
         'HTTP-Referer': 'https://vercel.com',
-        'X-Title': 'Forge-Agent Studio v7'
+        'X-Title': 'Forge-Agent Studio Core v9'
       },
       body: JSON.stringify({
         model: selectedModel,
@@ -31,14 +31,14 @@ export async function POST(request: Request) {
 
     if (!response.ok) {
       const errText = await response.text();
-      return NextResponse.json({ error: `OpenRouter error: ${errText}` }, { status: 500 });
+      return NextResponse.json({ error: `OpenRouter execution error: ${errText}` }, { status: 500 });
     }
 
     const data = await response.json();
     const content = data.choices[0]?.message?.content?.trim();
     
     if (!content) {
-      throw new Error("Received empty completion from model.");
+      throw new Error("Empty completion payload received from model.");
     }
 
     return NextResponse.json({ content });
