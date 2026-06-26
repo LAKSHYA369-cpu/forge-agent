@@ -1,15 +1,16 @@
 {
   "name": "forge-agent",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
+    "@webcontainer/api": "^1.1.8",
     "jszip": "^3.10.1",
+    "lucide-react": "^0.379.0",
     "next": "14.2.3",
     "nodemailer": "^6.9.13",
     "react": "^18.3.1",
