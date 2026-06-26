@@ -5,30 +5,32 @@ import nodemailer from 'nodemailer';
 
 export async function POST(request: Request) {
   try {
-    const { prompt, userEmail, githubToken, repoName } = await request.json();
+    const { prompt, userEmail, repoName } = await request.json();
 
     if (!prompt || !userEmail) {
       return NextResponse.json({ error: "Missing Target Email Address or Blueprint Specification." }, { status: 400 });
     }
 
-    if (!process.env.GROQ_API_KEY) {
-      return NextResponse.json({ error: "GROQ_API_KEY is not defined in Vercel settings panel variables." }, { status: 500 });
+    if (!process.env.OPENROUTER_API_KEY) {
+      return NextResponse.json({ error: "OPENROUTER_API_KEY is missing in Vercel environment configurations." }, { status: 500 });
     }
 
-    // Call Groq's high-speed API (Llama 3.3 70B Model)
-    const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    // 1. Fire Handshake with OpenRouter Endpoint (Llama 3.3 70B Core)
+    const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://vercel.com', // Required by OpenRouter rules
+        'X-Title': 'Forge-Agent OS'
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model: "meta-llama/llama-3.3-70b-instruct",
         messages: [{
           role: "user",
           content: `You are a Principal Software Engineer. Build a fully functional, complete application based on this request: "${prompt}".
-                  Write absolute complete code logic lines. Never truncate code or use code block comments like "// rest of your code here". Include complete configuration layout parameters.
-                  You must respond with ONLY a raw, clean, valid JSON object matching this exact structure with no extra conversational text or markdown blocks:
+                  Write absolute complete code logic lines. Never truncate code or use placeholder comments. Include complete configuration parameters.
+                  You must respond with ONLY a raw, clean, valid JSON object matching this exact structure with no extra conversational text or markdown codeblocks:
                   {
                     "files": [
                       { "path": "index.html", "content": "complete html string lines..." },
@@ -41,12 +43,12 @@ export async function POST(request: Request) {
       })
     });
 
-    if (!groqResponse.ok) {
-      const groqErr = await groqResponse.text();
-      return NextResponse.json({ error: `Groq Core Network Rejection: ${groqErr}` }, { status: 500 });
+    if (!openRouterResponse.ok) {
+      const errText = await openRouterResponse.text();
+      return NextResponse.json({ error: `OpenRouter Rejection Framework Logged: ${errText}` }, { status: 500 });
     }
 
-    const aiData = await groqResponse.json();
+    const aiData = await openRouterResponse.json();
     let rawText = aiData.choices[0].message.content.trim();
 
     if (rawText.startsWith("```json")) rawText = rawText.substring(7, rawText.length - 3).trim();
@@ -55,10 +57,10 @@ export async function POST(request: Request) {
     const parsedPayload = JSON.parse(rawText);
 
     if (!parsedPayload.files || !Array.isArray(parsedPayload.files)) {
-      return NextResponse.json({ error: "AI response did not parse into a valid file list tree structure." }, { status: 500 });
+      return NextResponse.json({ error: "AI structural response layout was invalid." }, { status: 500 });
     }
 
-    // Build the ZIP in-memory safely via base64 serialization string blocks
+    // 2. Structural zip generation block via pure data serialization
     const zip = new JSZip();
     parsedPayload.files.forEach((file: any) => {
       const cleanPath = file.path.replace(/^(\.\.\/|\/)+/, '');
@@ -68,7 +70,7 @@ export async function POST(request: Request) {
     const base64ZipData = await zip.generateAsync({ type: 'base64' });
     const zipBuffer = Buffer.from(base64ZipData, 'base64');
 
-    // Setup Gmail Transport System
+    // 3. Mailing Delivery Systems Core
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -87,6 +89,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, count: parsedPayload.files.length });
   } catch (error: any) {
-    return NextResponse.json({ error: `Agent Execution Exception: ${error.message}` }, { status: 500 });
+    return NextResponse.json({ error: `Agent Core Process Failure: ${error.message}` }, { status: 500 });
   }
 }
