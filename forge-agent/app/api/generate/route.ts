@@ -16,7 +16,7 @@ export async function POST(request: Request) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${openRouterKey}`,
         'HTTP-Referer': 'https://vercel.com',
-        'X-Title': 'Forge-Agent Studio Core v11'
+        'X-Title': 'Forge-Agent Studio Core v12'
       },
       body: JSON.stringify({
         model: selectedModel,
