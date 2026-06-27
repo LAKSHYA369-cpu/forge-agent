@@ -36,7 +36,8 @@ import {
   ArrowRight,
   UserCheck,
   ChevronRight,
-  ChevronLeft
+  ChevronLeft,
+  Mail
 } from 'lucide-react';
 
 type Step = 'IDLE' | 'PM_SPEC' | 'PM_APPROVE' | 'ARCHITECT_DESIGN' | 'ARCHITECT_APPROVE' | 'DEVELOPMENT' | 'TEST_RUNNING' | 'COMPLETED';
@@ -74,6 +75,7 @@ export default function Workspace() {
   const [session, setSession] = useState<any>(null);
   const [useLocalAuth, setUseLocalAuth] = useState(false);
   const [openRouterKey, setOpenRouterKey] = useState('');
+  const [directEmailInput, setDirectEmailInput] = useState('');
   const [prompt, setPrompt] = useState('');
   const [repoName, setRepoName] = useState('forge-application');
   const [selectedModel, setSelectedModel] = useState('meta-llama/llama-3.3-70b-instruct');
@@ -245,6 +247,21 @@ export default function Workspace() {
       provider,
       options: { redirectTo: window.location.origin }
     });
+  };
+
+  // Direct Email Access Bypass Logic (Allows login/signup without OAuth setups)
+  const handleDirectEmailBypass = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directEmailInput.trim()) {
+      showToast("Please enter a valid email address.", "error");
+      return;
+    }
+    const mockUser = { id: 'direct_email_user', email: directEmailInput.trim() };
+    localStorage.setItem('forge_local_session', JSON.stringify(mockUser));
+    setSession({ user: mockUser });
+    fetchLocalProjects();
+    addLog(`Direct access session initiated for email: ${directEmailInput}`);
+    showToast("Logged in successfully", "success");
   };
 
   const handleLogout = async () => {
@@ -593,7 +610,7 @@ Return your complete, corrected project file structure as a strict JSON object m
 
   const activeAgent = getActiveAgentHUD();
 
-  // Logged-out Landing Hero
+  // Logged-out Landing Hero (Styled, Responsive with Google, GitHub, Discord and direct Email inputs)
   if (!session) {
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
@@ -601,7 +618,7 @@ Return your complete, corrected project file structure as a strict JSON object m
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
         <div className="absolute inset-0 bg-[radial-gradient(#18181b_1px,transparent_1px)] [background-size:16px_16px] opacity-40 pointer-events-none" />
 
-        <div className="max-w-xl text-center space-y-8 z-10">
+        <div className="max-w-xl text-center space-y-8 z-10 w-full">
           <div className="inline-flex items-center space-x-2 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-1.5 text-xs text-indigo-400 font-semibold shadow-inner">
             <Sparkles size={13} className="text-indigo-400" />
             <span>Autonomous Software Engineer OS</span>
@@ -615,8 +632,33 @@ Return your complete, corrected project file structure as a strict JSON object m
             A visual development workbench. Runs file compilers, executes unit tests, and serves live hot-reloaded previews in real time.
           </p>
 
-          {/* Centered OAuth Controls */}
-          <div className="flex flex-col gap-2.5 max-w-sm mx-auto pt-4 w-full">
+          {/* Centered Sign-In / Login Controls */}
+          <div className="flex flex-col gap-3.5 max-w-sm mx-auto pt-4 w-full">
+            
+            {/* Direct Email Bypass Form */}
+            <form onSubmit={handleDirectEmailBypass} className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-5 space-y-3 backdrop-blur-md">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider flex items-center justify-center gap-1.5"><Mail size={12} /> Direct Email Access Bypass</span>
+              <div className="flex gap-2">
+                <input 
+                  type="email" 
+                  required
+                  placeholder="Enter email to begin..."
+                  value={directEmailInput}
+                  onChange={e => setDirectEmailInput(e.target.value)}
+                  className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300 focus:outline-none focus:border-indigo-500 font-sans"
+                />
+                <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 rounded-lg text-xs uppercase tracking-wider transition shrink-0">
+                  Launch
+                </button>
+              </div>
+            </form>
+
+            <div className="relative flex py-1 items-center">
+              <div className="flex-grow border-t border-zinc-800/60"></div>
+              <span className="flex-shrink mx-4 text-zinc-500 text-[9px] uppercase font-bold tracking-widest">Or authenticate via</span>
+              <div className="flex-grow border-t border-zinc-800/60"></div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <button 
                 onClick={() => handleOAuthLogin('github')}
@@ -626,17 +668,12 @@ Return your complete, corrected project file structure as a strict JSON object m
               </button>
               <button 
                 onClick={() => handleOAuthLogin('discord')}
-                className="bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 font-bold py-2.5 rounded-lg border border-indigo-900/30 transition flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider shadow-md shadow-indigo-950/20"
+                className="bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold py-2.5 rounded-lg border border-zinc-800 transition flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider"
               >
                 <Disc size={14} /> Discord
               </button>
             </div>
-            <button 
-              onClick={handleLocalBypassLogin}
-              className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:opacity-95 text-white font-bold px-6 py-3 rounded-lg transition flex items-center justify-center gap-2 text-xs uppercase tracking-wider shadow-lg shadow-indigo-600/20"
-            >
-              <PlayCircle size={16} /> Bypass database setup
-            </button>
+            
           </div>
         </div>
       </div>
@@ -659,11 +696,17 @@ Return your complete, corrected project file structure as a strict JSON object m
           <select 
             value={selectedModel} 
             onChange={e => setSelectedModel(e.target.value)}
-            className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-350 focus:outline-none focus:border-indigo-500 font-mono"
+            className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-300 focus:outline-none focus:border-indigo-500 font-mono"
           >
-            <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
-            <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+            {/* Expanded Premium OpenRouter Model Registry */}
+            <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B Instruct</option>
+            <option value="deepseek/deepseek-r1:free">DeepSeek R1 (Reasoning - FREE)</option>
+            <option value="deepseek/deepseek-chat">DeepSeek V3 (Chat - FAST)</option>
             <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+            <option value="openai/gpt-4o">GPT-4o (Flagship)</option>
+            <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+            <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+            <option value="meta-llama/llama-3-8b-instruct:free">Llama 3 8B (FREE)</option>
           </select>
 
           {/* Settings panel toggle */}
@@ -1010,7 +1053,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                           <span className="text-rose-400 font-bold block border-b border-zinc-855 pb-2 mb-2 uppercase tracking-wide flex items-center gap-1.5">
                             <AlertTriangle size={14} /> Sandbox unit testing errors detected
                           </span>
-                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-40 leading-relaxed">{testOutput}</div>
+                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-48 leading-relaxed">{testOutput}</div>
                         </div>
                       )}
                     </div>
