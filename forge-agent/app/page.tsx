@@ -33,11 +33,9 @@ import {
   Info,
   Disc,
   MessageSquare,
-  ArrowRight,
-  UserCheck,
-  ChevronRight,
+  Mail,
   ChevronLeft,
-  Mail
+  ChevronRight
 } from 'lucide-react';
 
 type Step = 'IDLE' | 'PM_SPEC' | 'PM_APPROVE' | 'ARCHITECT_DESIGN' | 'ARCHITECT_APPROVE' | 'DEVELOPMENT' | 'TEST_RUNNING' | 'COMPLETED';
@@ -287,7 +285,7 @@ export default function Workspace() {
     showToast("Logged out successfully", "info");
   };
 
-  // --- API Proxy Handshakes (Corrected to /api/generate) ---
+  // --- API Proxy Handshakes ---
   const callAgentAPI = async (systemInstruction: string, userPrompt: string, useJson: boolean = false) => {
     const res = await fetch('/api/generate', {
       method: 'POST',
@@ -308,7 +306,7 @@ export default function Workspace() {
     await container.fs.writeFile(filePath, content);
   };
 
-  // --- Step 1: Product Manager Agent (Configured for any Human and Programming Language) ---
+  // --- Step 1: Product Manager Agent ---
   const startPipeline = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!openRouterKey || !prompt) {
@@ -329,7 +327,7 @@ CRITICAL LANGUAGE LAW: Detect the human language used by the user in their promp
       const spec = await callAgentAPI(pmInstruction, `Requirements: ${prompt}`);
       setPmSpec(spec);
       addLog("Product Manager Agent generated Technical Specification document.");
-      addChatMessage('Product Manager', `Technical Specification completed successfully in your requested language.\n\n${spec.substring(0, 300)}...\n\n**Please review and approve below.**`, 'bg-indigo-400');
+      addChatMessage('Product Manager', `Technical Specification completed successfully.\n\n${spec.substring(0, 300)}...\n\n**Please review and approve below.**`, 'bg-indigo-400');
       setCurrentStep('PM_APPROVE');
     } catch (err: any) {
       addLog(`PM turn failed: ${err.message}`);
@@ -396,7 +394,6 @@ CRITICAL LANGUAGE LAW: Detect the human language used by the user in their promp
     runDevelopmentPipeline();
   };
 
-  // --- Step 3: Senior Developer Synthesis (Configured for any Human and Programming Language) ---
   const runDevelopmentPipeline = async () => {
     setCurrentStep('DEVELOPMENT');
     addLog("Architect structures approved. Deploying Senior Developer synthesizer...");
@@ -440,14 +437,6 @@ Return your complete, corrected project file structure as a strict JSON object m
     }
   };
 
-  const mountFilesToSandbox = async (filesToMount: ProjectFile[]) => {
-    if (!webcontainer) return;
-    for (const file of filesToMount) {
-      await safeWriteSandboxFile(webcontainer, file.path, file.content);
-    }
-  };
-
-  // --- Step 4: QA/Self-Healing Refinement Loops ---
   const runQALoop = async (currentFiles: ProjectFile[], attempt: number) => {
     if (attempt > 3) {
       addLog("Maximum autonomous debugging attempts exceeded. Spinning dev servers...");
@@ -540,6 +529,30 @@ Return your complete, corrected project file structure as a strict JSON object m
     }
   };
 
+  const archiveActiveProject = async (projectFiles: ProjectFile[]) => {
+    const newProject: SavedProject = {
+      id: Math.random().toString(),
+      title: repoName,
+      prompt,
+      spec: pmSpec,
+      architecture: architectureLayout,
+      files: projectFiles
+    };
+    if (supabase && session) {
+      await supabase.from('projects').insert({
+        user_id: session.user.id,
+        title: repoName,
+        prompt,
+        spec: pmSpec,
+        architecture: architectureLayout,
+        files: projectFiles
+      });
+      fetchUserProjects(session.user.id);
+    } else {
+      saveLocalProject(newProject);
+    }
+  };
+
   const downloadClientZip = async () => {
     const zip = new JSZip();
     files.forEach(f => zip.file(f.path, f.content));
@@ -551,26 +564,100 @@ Return your complete, corrected project file structure as a strict JSON object m
     showToast("Project downloaded cleanly as ZIP", "success");
   };
 
-  const handleCloseTab = (path: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updatedTabs = openTabs.filter(t => t !== path);
-    setOpenTabs(updatedTabs);
-    if (activeTabFile === path) {
-      setActiveTabFile(updatedTabs.length > 0 ? updatedTabs[0] : null);
+  const handleEditorScroll = () => {
+    if (codeEditorRef.current && lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = codeEditorRef.current.scrollTop;
     }
   };
 
-  const handleOpenTab = (path: string) => {
-    if (!openTabs.includes(path)) {
-      setOpenTabs(prev => [...prev, path]);
+  const renderLineNumbers = (fileContent: string) => {
+    const lines = fileContent.split('\n').length;
+    return Array.from({ length: lines }, (_, i) => (
+      <div key={i} className="h-5 text-right pr-3 text-zinc-600 select-none">
+        {i + 1}
+      </div>
+    ));
+  };
+
+  const handleEditorChange = (val: string) => {
+    if (!activeTabFile) return;
+    
+    const updated = files.map(f => f.path === activeTabFile ? { ...f, content: val } : f);
+    setFiles(updated);
+
+    if (writeTimeoutRef.current) clearTimeout(writeTimeoutRef.current);
+    writeTimeoutRef.current = setTimeout(async () => {
+      if (webcontainer) {
+        await webcontainer.fs.writeFile(activeTabFile!, val);
+      }
+    }, 350); 
+  };
+
+  const getActiveAgentHUD = () => {
+    switch (currentStep) {
+      case 'PM_SPEC':
+        return { name: "Product Manager Agent", color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/30", icon: <ClipboardList size={16} /> };
+      case 'ARCHITECT_DESIGN':
+        return { name: "Systems Architect Agent", color: "text-pink-400 bg-pink-500/10 border-pink-500/30", icon: <Layers size={16} /> };
+      case 'DEVELOPMENT':
+        return { name: "Senior Developer Agent", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30", icon: <Code size={16} /> };
+      case 'TEST_RUNNING':
+        return { name: "QA & Testing loop Agent", color: "text-amber-400 bg-amber-500/10 border-amber-500/30", icon: <TerminalIcon size={16} /> };
+      default:
+        return null;
     }
-    setActiveTabFile(path);
+  };
+
+  // Declare ActiveAgent HUD helper immediately before usage
+  const activeAgent = getActiveAgentHUD();
+
+  const handleCreateFile = async () => {
+    if (!newFilePath.trim()) return;
+    const exists = files.some(f => f.path === newFilePath);
+    if (exists) {
+      showToast("A file with that path already exists.", "error");
+      return;
+    }
+    const newFile: ProjectFile = { path: newFilePath, content: '' };
+    const updatedFiles = [...files, newFile];
+    setFiles(updatedFiles);
+    
+    if (!openTabs.includes(newFilePath)) {
+      setOpenTabs(prev => [...prev, newFilePath]);
+    }
+    setActiveTabFile(newFilePath);
+    setNewFilePath('');
+    setShowNewFileInput(false);
+    
+    if (webcontainer) {
+      await safeWriteSandboxFile(webcontainer, newFilePath, '');
+    }
+    showToast(`Created file: ${newFilePath}`, "success");
+  };
+
+  const handleDeleteFile = async (path: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updatedFiles = files.filter(f => f.path !== path);
+    setFiles(updatedFiles);
+    
+    const updatedTabs = openTabs.filter(t => t !== path);
+    setOpenTabs(updatedTabs);
+    
+    if (activeTabFile === path) {
+      setActiveTabFile(updatedTabs.length > 0 ? updatedTabs[0] : null);
+    }
+    
+    if (webcontainer) {
+      await webcontainer.fs.rm(path);
+    }
+    showToast(`Deleted file: ${path}`, "info");
   };
 
   // Logged-out Landing Hero
   if (!session) {
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        {/* Glowing Background Radial Accents */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
         <div className="absolute inset-0 bg-[radial-gradient(#18181b_1px,transparent_1px)] [background-size:16px_16px] opacity-40 pointer-events-none" />
 
@@ -647,9 +734,8 @@ Return your complete, corrected project file structure as a strict JSON object m
           <select 
             value={selectedModel} 
             onChange={e => setSelectedModel(e.target.value)}
-            className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-300 focus:outline-none focus:border-indigo-500 font-mono"
+            className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-350 focus:outline-none focus:border-indigo-500 font-mono"
           >
-            {/* Extended Multi-lingual and Polyglot Intelligent Model Registry */}
             <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B Instruct</option>
             <option value="deepseek/deepseek-r1:free">DeepSeek R1 (Reasoning - FREE)</option>
             <option value="deepseek/deepseek-chat">DeepSeek V3 (Chat - FAST)</option>
@@ -864,7 +950,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                 <div className="grid grid-cols-1 gap-4 flex-1">
                   {pmSpec && (
                     <div className="bg-zinc-900/10 border border-zinc-800 rounded-lg p-4 h-80 overflow-y-auto">
-                      <span className="text-indigo-400 font-bold block border-b border-zinc-855 pb-2 mb-2 uppercase tracking-wider text-[10px]">Product Specifications Document</span>
+                      <span className="text-indigo-400 font-bold block border-b border-zinc-850 pb-2 mb-2 uppercase tracking-wider text-[10px]">Product Specifications Document</span>
                       <div className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed pt-2 font-sans">{pmSpec}</div>
                     </div>
                   )}
