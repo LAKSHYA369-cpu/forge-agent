@@ -70,6 +70,15 @@ interface ChatMessage {
   timestamp: string;
 }
 
+// Thread-Safe WebContainer Singleton Boot Instantiation to Prevent Double-Boot Failures
+let webcontainerInstancePromise: Promise<WebContainer> | null = null;
+async function getWebContainerInstance(): Promise<WebContainer> {
+  if (!webcontainerInstancePromise) {
+    webcontainerInstancePromise = WebContainer.boot();
+  }
+  return webcontainerInstancePromise;
+}
+
 export default function Workspace() {
   const [supabase, setSupabase] = useState<any>(null);
   const [session, setSession] = useState<any>(null);
@@ -116,7 +125,7 @@ export default function Workspace() {
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const writeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Global scope helper function to retrieve local projects
+  // Global helper function to retrieve local projects
   const fetchLocalProjects = useCallback(() => {
     const data = localStorage.getItem('forge_local_projects');
     if (data) setSavedProjects(JSON.parse(data));
@@ -171,13 +180,13 @@ export default function Workspace() {
     };
   }, [fetchLocalProjects]);
 
-  // WebContainer init
+  // WebContainer Singleton initialization
   useEffect(() => {
     let active = true;
     async function bootSandbox() {
       try {
         addLog("Booting sandboxed system WebContainer layers...");
-        const instance = await WebContainer.boot();
+        const instance = await getWebContainerInstance();
         if (active) {
           setWebcontainer(instance);
           setIsBootingSandbox(false);
@@ -299,7 +308,7 @@ export default function Workspace() {
     await container.fs.writeFile(filePath, content);
   };
 
-  // --- Step 1: Product Manager Agent ---
+  // --- Step 1: Product Manager Agent (Configured for any Human and Programming Language) ---
   const startPipeline = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!openRouterKey || !prompt) {
@@ -310,15 +319,17 @@ export default function Workspace() {
     addLog("Product Manager Agent analyzing user blueprint directives...");
     setChatHistory([]); 
     addChatMessage('User', prompt, 'bg-indigo-500');
-    addChatMessage('Product Manager', 'Analyzing your app blueprint requirements. Designing the Technical Specifications outline now...', 'bg-indigo-400');
+    addChatMessage('Product Manager', 'Analyzing requirements. Structuring product specifications outline in your requested language...', 'bg-indigo-400');
     setActiveTab('logs');
 
     try {
-      const pmInstruction = `You are an expert Principal Product Manager. Analyze the user instructions and build a rigorous, comprehensive Technical Specification Document in Markdown. Incorporate clean layout wireframe designs, functional logic requirements, and list all required features clearly.`;
+      const pmInstruction = `You are an expert Principal Product Manager. Analyze the user instructions and build a rigorous, comprehensive Technical Specification Document in Markdown. Incorporate clean layout wireframe designs, functional logic requirements, and list all required features clearly.
+CRITICAL LANGUAGE LAW: Detect the human language used by the user in their prompt. You MUST output the entire technical specification document, your thoughts, and responses in that SAME human language (e.g. if requested in Hindi, write in Hindi; if in Spanish, write in Spanish). Do not use English unless the user requested it.`;
+      
       const spec = await callAgentAPI(pmInstruction, `Requirements: ${prompt}`);
       setPmSpec(spec);
       addLog("Product Manager Agent generated Technical Specification document.");
-      addChatMessage('Product Manager', `Technical Specification completed successfully.\n\n${spec.substring(0, 300)}...\n\n**Please review and approve below.**`, 'bg-indigo-400');
+      addChatMessage('Product Manager', `Technical Specification completed successfully in your requested language.\n\n${spec.substring(0, 300)}...\n\n**Please review and approve below.**`, 'bg-indigo-400');
       setCurrentStep('PM_APPROVE');
     } catch (err: any) {
       addLog(`PM turn failed: ${err.message}`);
@@ -334,7 +345,7 @@ export default function Workspace() {
       addChatMessage('User', `Revisions requested: ${feedback}`, 'bg-indigo-500');
       addChatMessage('Product Manager', "Processing specifications updates based on your feedback...", 'bg-indigo-400');
       try {
-        const spec = await callAgentAPI(`Update specifications layout reflecting feedback.`, `Spec:\n${pmSpec}\n\nFeedback:\n${feedback}`);
+        const spec = await callAgentAPI(`Update specifications layout reflecting feedback. Match the user's human language.`, `Spec:\n${pmSpec}\n\nFeedback:\n${feedback}`);
         setPmSpec(spec);
         setFeedback('');
         addChatMessage('Product Manager', `Specs updated successfully.\n\n${spec.substring(0, 300)}...\n\n**Please review and approve.**`, 'bg-indigo-400');
@@ -351,7 +362,7 @@ export default function Workspace() {
     addLog("Spec approved. Contacting Software Architect Agent...");
     addChatMessage('Systems Architect', "Designing database schemas, technology stacks, and system tree maps based on the approved spec...", 'bg-pink-400');
     try {
-      const design = await callAgentAPI(`Design complete file systems layout, databases schema, and structure in markdown.`, `Specs:\n${pmSpec}`);
+      const design = await callAgentAPI(`Design complete file systems layout, databases schema, and structure in markdown. Match the user's human language in text explanations.`, `Specs:\n${pmSpec}`);
       setArchitectureLayout(design);
       addLog("Software Architect completed directory and schema layouts.");
       addChatMessage('Systems Architect', `Architecture Layout designs generated.\n\n${design.substring(0, 300)}...\n\n**Please approve configuration layout.**`, 'bg-pink-400');
@@ -369,7 +380,7 @@ export default function Workspace() {
       addChatMessage('User', `Directory adjustments requested: ${feedback}`, 'bg-indigo-500');
       addChatMessage('Systems Architect', "Refining database systems and package structures...", 'bg-pink-400');
       try {
-        const design = await callAgentAPI(`Update system architectures layout based on instructions.`, `Architecture:\n${architectureLayout}\n\nFeedback:\n${feedback}`);
+        const design = await callAgentAPI(`Update system architectures layout based on instructions. Match the user's human language.`, `Architecture:\n${architectureLayout}\n\nFeedback:\n${feedback}`);
         setArchitectureLayout(design);
         setFeedback('');
         addChatMessage('Systems Architect', `Designs updated successfully.\n\n${design.substring(0, 300)}...\n\n**Review and Approve.**`, 'bg-pink-400');
@@ -385,13 +396,18 @@ export default function Workspace() {
     runDevelopmentPipeline();
   };
 
+  // --- Step 3: Senior Developer Synthesis (Configured for any Human and Programming Language) ---
   const runDevelopmentPipeline = async () => {
     setCurrentStep('DEVELOPMENT');
     addLog("Architect structures approved. Deploying Senior Developer synthesizer...");
     addChatMessage('Senior Developer', "Synthesizing clean, fully-formed code blocks inside the file explorer workspace...", 'bg-emerald-400');
 
     try {
-      const devInstruction = `You are an expert Senior Fullstack Developer. Write fully operational code file mapping configurations based on architecture designs. 
+      const devInstruction = `You are an expert Senior Fullstack Developer. Write fully operational code file mapping configurations based on architecture designs.
+CRITICAL POLYGLOT RULES:
+1. Write code in the exact programming languages, runtimes, and frameworks requested (HTML/JS/CSS, Node.js, Python, Rust, Go, C++, etc.).
+2. Write complete, functional logic. Do not truncate. Never write placeholder comments like "// code goes here".
+3. Write file comments, API documentation, and README descriptions in the same human language used by the user in their prompt.
 Return your complete, corrected project file structure as a strict JSON object mapping with NO conversational markdown:
 {
   "files": [
@@ -424,6 +440,14 @@ Return your complete, corrected project file structure as a strict JSON object m
     }
   };
 
+  const mountFilesToSandbox = async (filesToMount: ProjectFile[]) => {
+    if (!webcontainer) return;
+    for (const file of filesToMount) {
+      await safeWriteSandboxFile(webcontainer, file.path, file.content);
+    }
+  };
+
+  // --- Step 4: QA/Self-Healing Refinement Loops ---
   const runQALoop = async (currentFiles: ProjectFile[], attempt: number) => {
     if (attempt > 3) {
       addLog("Maximum autonomous debugging attempts exceeded. Spinning dev servers...");
@@ -543,7 +567,7 @@ Return your complete, corrected project file structure as a strict JSON object m
     setActiveTabFile(path);
   };
 
-  // Logged-out Landing Hero (Vercel/Claude-style design)
+  // Logged-out Landing Hero
   if (!session) {
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
@@ -564,6 +588,7 @@ Return your complete, corrected project file structure as a strict JSON object m
             A visual development workbench. Runs file compilers, executes unit tests, and serves live hot-reloaded previews in real time.
           </p>
 
+          {/* Centered OAuth Controls */}
           <div className="flex flex-col gap-3.5 max-w-sm mx-auto pt-4 w-full">
             <form onSubmit={handleDirectEmailBypass} className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-5 space-y-3 backdrop-blur-md">
               <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider flex items-center justify-center gap-1.5"><Mail size={12} /> Direct Email Access Bypass</span>
@@ -624,6 +649,7 @@ Return your complete, corrected project file structure as a strict JSON object m
             onChange={e => setSelectedModel(e.target.value)}
             className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-300 focus:outline-none focus:border-indigo-500 font-mono"
           >
+            {/* Extended Multi-lingual and Polyglot Intelligent Model Registry */}
             <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B Instruct</option>
             <option value="deepseek/deepseek-r1:free">DeepSeek R1 (Reasoning - FREE)</option>
             <option value="deepseek/deepseek-chat">DeepSeek V3 (Chat - FAST)</option>
@@ -676,6 +702,7 @@ Return your complete, corrected project file structure as a strict JSON object m
             />
           </div>
 
+          {/* Unified Chat Timeline Area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {chatHistory.length === 0 ? (
               <div className="text-center text-zinc-500 space-y-2 py-8 font-sans">
@@ -837,7 +864,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                 <div className="grid grid-cols-1 gap-4 flex-1">
                   {pmSpec && (
                     <div className="bg-zinc-900/10 border border-zinc-800 rounded-lg p-4 h-80 overflow-y-auto">
-                      <span className="text-indigo-400 font-bold block border-b border-zinc-850 pb-2 mb-2 uppercase tracking-wider text-[10px]">Product Specifications Document</span>
+                      <span className="text-indigo-400 font-bold block border-b border-zinc-855 pb-2 mb-2 uppercase tracking-wider text-[10px]">Product Specifications Document</span>
                       <div className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed pt-2 font-sans">{pmSpec}</div>
                     </div>
                   )}
