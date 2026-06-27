@@ -116,6 +116,12 @@ export default function Workspace() {
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const writeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Global scope helper function to retrieve local projects
+  const fetchLocalProjects = useCallback(() => {
+    const data = localStorage.getItem('forge_local_projects');
+    if (data) setSavedProjects(JSON.parse(data));
+  }, []);
+
   // Safe Client-Side Client Initialization
   useEffect(() => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -126,8 +132,7 @@ export default function Workspace() {
       const localUser = localStorage.getItem('forge_local_session');
       if (localUser) {
         setSession({ user: JSON.parse(localUser) });
-        const localProj = localStorage.getItem('forge_local_projects');
-        if (localProj) setSavedProjects(JSON.parse(localProj));
+        fetchLocalProjects();
       }
       addLog("Database credentials missing. Running in local bypass mode.");
       return;
@@ -164,7 +169,7 @@ export default function Workspace() {
       subscription.unsubscribe();
       if (writeTimeoutRef.current) clearTimeout(writeTimeoutRef.current);
     };
-  }, []);
+  }, [fetchLocalProjects]);
 
   // WebContainer init
   useEffect(() => {
@@ -225,7 +230,7 @@ export default function Workspace() {
   const saveUserProfileKey = async () => {
     if (!session) return;
     addLog("Updating profile configuration settings...");
-    if (supabase) {
+    if (supabase && !useLocalAuth) {
       await supabase.from('profiles').upsert({
         id: session.user.id,
         email: session.user.email,
@@ -249,7 +254,6 @@ export default function Workspace() {
     });
   };
 
-  // Direct Email Access Bypass Logic (Allows login/signup without OAuth setups)
   const handleDirectEmailBypass = (e: React.FormEvent) => {
     e.preventDefault();
     if (!directEmailInput.trim()) {
@@ -265,7 +269,7 @@ export default function Workspace() {
   };
 
   const handleLogout = async () => {
-    if (supabase) {
+    if (supabase && !useLocalAuth) {
       await supabase.auth.signOut();
     } else {
       localStorage.removeItem('forge_local_session');
@@ -274,9 +278,9 @@ export default function Workspace() {
     showToast("Logged out successfully", "info");
   };
 
-  // --- API Proxy Handshakes ---
+  // --- API Proxy Handshakes (Corrected to /api/generate) ---
   const callAgentAPI = async (systemInstruction: string, userPrompt: string, useJson: boolean = false) => {
-    const res = await fetch('/api/agent', {
+    const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ systemInstruction, userPrompt, openRouterKey, useJson, model: selectedModel })
@@ -420,13 +424,6 @@ Return your complete, corrected project file structure as a strict JSON object m
     }
   };
 
-  const mountFilesToSandbox = async (filesToMount: ProjectFile[]) => {
-    if (!webcontainer) return;
-    for (const file of filesToMount) {
-      await safeWriteSandboxFile(webcontainer, file.path, file.content);
-    }
-  };
-
   const runQALoop = async (currentFiles: ProjectFile[], attempt: number) => {
     if (attempt > 3) {
       addLog("Maximum autonomous debugging attempts exceeded. Spinning dev servers...");
@@ -506,51 +503,17 @@ Return your complete, corrected project file structure as a strict JSON object m
     }
   };
 
-  const archiveActiveProject = async (projectFiles: ProjectFile[]) => {
-    const newProject: SavedProject = {
-      id: Math.random().toString(),
-      title: repoName,
-      prompt,
-      spec: pmSpec,
-      architecture: architectureLayout,
-      files: projectFiles
-    };
-    if (supabase && session) {
-      await supabase.from('projects').insert({
-        user_id: session.user.id,
-        title: repoName,
-        prompt,
-        spec: pmSpec,
-        architecture: architectureLayout,
-        files: projectFiles
-      });
-      fetchUserProjects(session.user.id);
-    } else {
-      saveLocalProject(newProject);
+  const cleanAndParseJSON = (text: string) => {
+    let raw = text.trim();
+    if (raw.startsWith("```json")) raw = raw.substring(7, raw.length - 3).trim();
+    else if (raw.startsWith("```")) raw = raw.substring(3, raw.length - 3).trim();
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) return JSON.parse(match[0]);
+      throw new Error("Could not parse agent output JSON schema.");
     }
-  };
-
-  const loadSavedProject = (project: SavedProject) => {
-    setRepoName(project.title);
-    setPrompt(project.prompt);
-    setPmSpec(project.spec);
-    setArchitectureLayout(project.architecture);
-    setFiles(project.files);
-    if (project.files.length > 0) {
-      setOpenTabs([project.files[0].path]);
-      setActiveTabFile(project.files[0].path);
-    }
-    setCurrentStep('COMPLETED');
-    setActiveTab('logs');
-    addLog(`Retrieved project archive: ${project.title}`);
-    
-    setChatHistory([
-      { id: '1', sender: 'User', avatarColor: 'bg-indigo-500', content: project.prompt, timestamp: 'Archived' },
-      { id: '2', sender: 'Product Manager', avatarColor: 'bg-indigo-400', content: `Retrieved specification layout from files mapping:\n\n${project.spec.substring(0, 150)}...`, timestamp: 'Archived' },
-      { id: '3', sender: 'Senior Developer', avatarColor: 'bg-emerald-400', content: `Workspace files mapped correctly. Compiled ${project.files.length} active files. Use tabs to explore.`, timestamp: 'Archived' }
-    ]);
-    
-    showToast(`Loaded "${project.title}"`, "info");
   };
 
   const downloadClientZip = async () => {
@@ -564,57 +527,26 @@ Return your complete, corrected project file structure as a strict JSON object m
     showToast("Project downloaded cleanly as ZIP", "success");
   };
 
-  const handleEditorScroll = () => {
-    if (codeEditorRef.current && lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = codeEditorRef.current.scrollTop;
+  const handleCloseTab = (path: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updatedTabs = openTabs.filter(t => t !== path);
+    setOpenTabs(updatedTabs);
+    if (activeTabFile === path) {
+      setActiveTabFile(updatedTabs.length > 0 ? updatedTabs[0] : null);
     }
   };
 
-  const renderLineNumbers = (fileContent: string) => {
-    const lines = fileContent.split('\n').length;
-    return Array.from({ length: lines }, (_, i) => (
-      <div key={i} className="h-5 text-right pr-3 text-zinc-600 select-none">
-        {i + 1}
-      </div>
-    ));
-  };
-
-  const handleEditorChange = (val: string) => {
-    if (!activeTabFile) return;
-    
-    const updated = files.map(f => f.path === activeTabFile ? { ...f, content: val } : f);
-    setFiles(updated);
-
-    if (writeTimeoutRef.current) clearTimeout(writeTimeoutRef.current);
-    writeTimeoutRef.current = setTimeout(async () => {
-      if (webcontainer) {
-        await webcontainer.fs.writeFile(activeTabFile!, val);
-      }
-    }, 350); 
-  };
-
-  const getActiveAgentHUD = () => {
-    switch (currentStep) {
-      case 'PM_SPEC':
-        return { name: "Product Manager Agent", color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/30", icon: <ClipboardList size={16} /> };
-      case 'ARCHITECT_DESIGN':
-        return { name: "Systems Architect Agent", color: "text-pink-400 bg-pink-500/10 border-pink-500/30", icon: <Layers size={16} /> };
-      case 'DEVELOPMENT':
-        return { name: "Senior Developer Agent", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30", icon: <Code size={16} /> };
-      case 'TEST_RUNNING':
-        return { name: "QA & Testing loop Agent", color: "text-amber-400 bg-amber-500/10 border-amber-500/30", icon: <TerminalIcon size={16} /> };
-      default:
-        return null;
+  const handleOpenTab = (path: string) => {
+    if (!openTabs.includes(path)) {
+      setOpenTabs(prev => [...prev, path]);
     }
+    setActiveTabFile(path);
   };
 
-  const activeAgent = getActiveAgentHUD();
-
-  // Logged-out Landing Hero (Styled, Responsive with Google, GitHub, Discord and direct Email inputs)
+  // Logged-out Landing Hero (Vercel/Claude-style design)
   if (!session) {
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        {/* Glowing Background Radial Accents */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
         <div className="absolute inset-0 bg-[radial-gradient(#18181b_1px,transparent_1px)] [background-size:16px_16px] opacity-40 pointer-events-none" />
 
@@ -632,10 +564,7 @@ Return your complete, corrected project file structure as a strict JSON object m
             A visual development workbench. Runs file compilers, executes unit tests, and serves live hot-reloaded previews in real time.
           </p>
 
-          {/* Centered Sign-In / Login Controls */}
           <div className="flex flex-col gap-3.5 max-w-sm mx-auto pt-4 w-full">
-            
-            {/* Direct Email Bypass Form */}
             <form onSubmit={handleDirectEmailBypass} className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-5 space-y-3 backdrop-blur-md">
               <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider flex items-center justify-center gap-1.5"><Mail size={12} /> Direct Email Access Bypass</span>
               <div className="flex gap-2">
@@ -673,17 +602,14 @@ Return your complete, corrected project file structure as a strict JSON object m
                 <Disc size={14} /> Discord
               </button>
             </div>
-            
           </div>
         </div>
       </div>
     );
   }
 
-  // Active Production Workspace
   return (
     <div className="h-screen w-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans text-xs overflow-hidden select-none">
-      
       {/* Top Header Panel */}
       <header className="h-14 border-b border-zinc-800 bg-zinc-900/10 flex items-center justify-between px-6 shrink-0 z-10 backdrop-blur-md">
         <div className="flex items-center space-x-3">
@@ -698,18 +624,14 @@ Return your complete, corrected project file structure as a strict JSON object m
             onChange={e => setSelectedModel(e.target.value)}
             className="bg-zinc-950 border border-zinc-800 rounded px-3 py-1 text-zinc-300 focus:outline-none focus:border-indigo-500 font-mono"
           >
-            {/* Expanded Premium OpenRouter Model Registry */}
             <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B Instruct</option>
             <option value="deepseek/deepseek-r1:free">DeepSeek R1 (Reasoning - FREE)</option>
             <option value="deepseek/deepseek-chat">DeepSeek V3 (Chat - FAST)</option>
             <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-            <option value="openai/gpt-4o">GPT-4o (Flagship)</option>
             <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
-            <option value="meta-llama/llama-3-8b-instruct:free">Llama 3 8B (FREE)</option>
+            <option value="openai/gpt-4o">GPT-4o (Flagship)</option>
           </select>
 
-          {/* Settings panel toggle */}
           <button 
             onClick={() => setIsConfigOpen(!isConfigOpen)}
             className={`p-1.5 rounded border border-zinc-800 transition ${isConfigOpen ? 'bg-zinc-800 text-white' : 'bg-zinc-950 text-zinc-400'}`}
@@ -754,7 +676,6 @@ Return your complete, corrected project file structure as a strict JSON object m
             />
           </div>
 
-          {/* Unified Chat Timeline Area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {chatHistory.length === 0 ? (
               <div className="text-center text-zinc-500 space-y-2 py-8 font-sans">
@@ -788,7 +709,6 @@ Return your complete, corrected project file structure as a strict JSON object m
             )}
           </div>
 
-          {/* Interactive Gate Controllers and Inputs inside sidebar */}
           <div className="p-4 border-t border-zinc-800/80 bg-zinc-950/20 shrink-0 space-y-3">
             {currentStep === 'IDLE' ? (
               <form onSubmit={startPipeline} className="space-y-2">
@@ -846,7 +766,6 @@ Return your complete, corrected project file structure as a strict JSON object m
               </div>
             )}
 
-            {/* Historical Saved Projects Archive */}
             {savedProjects.length > 0 && currentStep === 'IDLE' && (
               <div className="pt-2 border-t border-zinc-800/60">
                 <span className="text-[9px] uppercase text-zinc-500 font-bold block mb-1.5 tracking-wider flex items-center gap-1"><History size={10} /> Archived Projects</span>
@@ -1053,7 +972,7 @@ Return your complete, corrected project file structure as a strict JSON object m
                           <span className="text-rose-400 font-bold block border-b border-zinc-855 pb-2 mb-2 uppercase tracking-wide flex items-center gap-1.5">
                             <AlertTriangle size={14} /> Sandbox unit testing errors detected
                           </span>
-                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-48 leading-relaxed">{testOutput}</div>
+                          <div className="text-zinc-300 whitespace-pre-wrap overflow-y-auto max-h-40 leading-relaxed">{testOutput}</div>
                         </div>
                       )}
                     </div>
